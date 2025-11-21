@@ -1,0 +1,131 @@
+const timeText = document.getElementById("timeText");
+const pauseIconElement = document.getElementById("pauseIcon");
+const { ipcRenderer } = require('electron');
+
+let endingTime = new Date(Date.now());
+let startTime = new Date(Date.now());
+let pauseTime = 0;
+
+/* sleep-mode vars */
+let sleepSlowOffsetMs = 0;
+let sleepLastTickMs = Date.now();
+const sleepGetScale = () => (window.sleepModeEnabled ? 0.5 : 1.0);
+window.addEventListener('sleepModeMaybeChanged', () => { sleepLastTickMs = Date.now(); });
+const resetTime = () => {
+    endingTime = new Date(new Date(Date.now()) - pauseTime);
+    endingTime = timeFunc.addHours(endingTime, initialHours);
+    endingTime = timeFunc.addMinutes(endingTime, initialMinutes);
+    endingTime = timeFunc.addSeconds(endingTime, initialSeconds);
+}
+
+resetTime();
+
+if (isGreenBackground) {
+    document.body.style.backgroundColor = '#00ff00';
+}
+
+let countdownEnded = false;
+let users = [];
+let time;
+
+let isPause = true;
+
+let prevPauseDate = new Date(Date.now());
+
+const getNextTime = () => {
+    const now = new Date(Date.now());
+    /* sleep accumulate */
+    if (!isPause) {
+        const nowMs = now.getTime();
+        const delta = nowMs - (sleepLastTickMs || nowMs);
+        const scale = sleepGetScale();
+        if (scale < 1) { sleepSlowOffsetMs += (1 - scale) * delta; }
+        sleepLastTickMs = nowMs;
+    } else {
+        sleepLastTickMs = now.getTime(); // no slow accumulation on pause
+    }
+    if (isPause && prevPauseDate) {
+        const cur = now;
+        pauseTime += now - prevPauseDate;
+        prevPauseDate = cur;
+    }
+
+    let currentTime = now - (pauseTime + sleepSlowOffsetMs);
+    let differenceTime = endingTime - currentTime;
+
+    time = `${timeFunc.getHours(differenceTime)}:${timeFunc.getMinutes(differenceTime)}:${timeFunc.getSeconds(differenceTime)}`;
+    if (differenceTime <= 0) {
+        if (canIncreaseTimeAfterStop) {
+            endingTime = new Date(currentTime);
+        } else {
+            clearInterval(countdownUpdater);
+            countdownEnded = true;
+        }
+        time = "00:00:00";
+    }
+    timeText.innerText = time;
+    ipcRenderer.send('overlay:state', { remaining: time });
+
+    requestAnimationFrame(getNextTime);
+};
+
+requestAnimationFrame(getNextTime);
+
+const addTime = async (time, s) => {
+    endingTime = timeFunc.addSeconds(time, s);
+    let addedTime = document.createElement("p");
+    addedTime.classList = "addedTime";
+    addedTime.innerText = `${s > 0 ? '+' : ''}${s.toString().split('.')[0]}${s.toString().split('.')[1] ? '.' + s.toString().split('.')[1].slice(0, 3) : ''}s`;
+    document.body.appendChild(addedTime);
+    addedTime.style.display = "block";
+    await sleep(50);
+    addedTime.style.left = `${randomInRange(35, 65)}%`;
+    addedTime.style.top = `${randomInRange(15, 60)}%`;
+    addedTime.style.opacity = "1";
+    await sleep(2500);
+    addedTime.style.opacity = "0";
+    await sleep(500);
+    addedTime.remove();
+};
+
+const testAddTime = (times, delay) => {
+    let addTimeInterval = setInterval(async () => {
+        if (times > 0) {
+            await sleep(randomInRange(50, delay - 50));
+            addTime(endingTime, 30);
+            --times;
+        }
+        else {
+            clearInterval(addTimeInterval);
+        }
+    }, delay);
+};
+
+document.addEventListener("keydown", (e) => {
+    switch (e.code) {
+        case "ArrowUp":
+            if (e.shiftKey) {
+                addTime(endingTime, timeIncrease);
+                return;
+            }
+            addTime(endingTime, timeMinuteIncDec)
+            return
+        case "ArrowDown":
+            if (e.shiftKey) {
+                addTime(endingTime, -timeDecrease);
+                return;
+            }
+            addTime(endingTime, -timeMinuteIncDec)
+            return
+        case "KeyR":
+            resetTime();
+            return;
+        case "Space":
+            prevPauseDate = isPause ? null : new Date(Date.now());
+            isPause = !isPause;
+            return;
+        case "KeyO":
+            ipcRenderer.send('control:toggle');
+            return;
+    }
+})
