@@ -11,14 +11,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Prokhor-Konev/timer"
+    "url": "git+https://github.com/EnotikSergo/donathon_timer"
   },
-  "author": "Kozjar",
+  "author": "Kozjar, EnotikSergo",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/Prokhor-Konev/timer"
+    "url": "https://github.com/EnotikSergo/donathon_timer"
   },
-  "homepage": "https://github.com/Prokhor-Konev/timer",
+  "homepage": "https://github.com/EnotikSergo/donathon_timer",
   "devDependencies": {
     "@electron-forge/cli": "^6.0.0-beta.63",
     "@electron-forge/maker-deb": "^6.0.0-beta.63",
