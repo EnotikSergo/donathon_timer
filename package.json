@@ -28,7 +28,8 @@
     "electron": "^18.0.4"
   },
   "dependencies": {
-    "electron-squirrel-startup": "^1.0.0"
+    "electron-squirrel-startup": "^1.0.0",
+    "socket.io-client": "^4.8.3"
   },
   "config": {
     "forge": {

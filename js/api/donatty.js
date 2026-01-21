@@ -8,13 +8,24 @@
     let lastDonationId = null;
     let donattyEventSource = null;
     let donattyReconnectTimeout = null;
+    const SYSTEM = 'DY';
+    var donattyZoneOffset = -180;
+
+    function sendStatus(status) {
+        ipcRenderer.send('donation:status', {
+            system: SYSTEM,
+            status
+        });
+    }
+
+    sendStatus('disconnected');
 
     function getDonattyConfig() {
-        const ref = (window.donattyRef || '').trim();
-        const widgetToken = (window.donattyWidgetToken || '').trim();
+        const ref = (donattyWidgetRef || '').trim();
+        const widgetToken = (donattyWidgetToken || '').trim();
         const zoneOffset =
-            typeof window.donattyZoneOffset === 'number'
-                ? window.donattyZoneOffset
+            typeof donattyZoneOffset === 'number'
+                ? donattyZoneOffset
                 : -180;
 
         return { ref, widgetToken, zoneOffset };
@@ -24,8 +35,10 @@
         const { ref, widgetToken, zoneOffset } = getDonattyConfig();
 
         if (!ref || !widgetToken) {
+            sendStatus('disconnected');
             return;
         }
+        console.log('[DY] Подключение к Donatty...');
 
         if (donattyEventSource) {
             try {
@@ -61,6 +74,7 @@
             })
             .catch((err) => {
                 console.error('Donatty auth error:', err);
+                sendStatus('error');
                 scheduleDonattyReconnect();
             });
     }
@@ -82,6 +96,9 @@
         try {
             const es = new EventSource(url);
             donattyEventSource = es;
+
+            sendStatus('connected');
+            console.log('[DY] Успешное подключение к Donnaty');
 
             const handleEvent = (event) => {
                 if (!event || !event.data) return;
@@ -114,6 +131,7 @@
 
             es.onerror = (err) => {
                 console.error('Donatty SSE error:', err);
+                sendStatus('error');
                 try {
                     es.close();
                 } catch (_) {}
@@ -122,6 +140,7 @@
             };
         } catch (err) {
             console.error('Donatty SSE open error:', err);
+            sendStatus('error');
             scheduleDonattyReconnect();
         }
     }
@@ -188,10 +207,10 @@
 
     if (
         typeof window !== 'undefined' &&
-        typeof window.donattyRef !== 'undefined' &&
-        typeof window.donattyWidgetToken !== 'undefined' &&
-        window.donattyRef &&
-        window.donattyWidgetToken
+        typeof donattyWidgetRef !== 'undefined' &&
+        typeof donattyWidgetToken !== 'undefined' &&
+        donattyWidgetRef &&
+        donattyWidgetToken
     ) {
         if (typeof fetch !== 'undefined') {
             startDonatty();

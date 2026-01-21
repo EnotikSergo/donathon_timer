@@ -17,6 +17,7 @@
       body {
           width: 100vw;
           height: 100vh;
+          position: relative;
       }
       :root {
           --background-color: rgb(45, 45, 44);
@@ -51,18 +52,60 @@
           top: 0;
           bottom: 0;
       }
+      .addedTime {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          opacity: 0;
+          z-index: 100;
+          font-weight: 600;
+          font-size: 3.25rem;
+          text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+          color: #fff;
+          pointer-events: none;
+          transition:top 1s ease-out, opacity .5s ease-out;
+      }
   </style>
 </head>
 <body>
   <div id="container">
       <div id="textDiv">
         <p id="timeText">00:00:00</p>
-        <div id="subtitle"></div>
+          <div id="subtitle"></div>
       </div>
   </div>
   <script>
     const elT = document.getElementById('timeText');
     const elS = document.getElementById('subtitle');
+    function rand(min, max) {
+        return Math.floor(Math.random() * (max - min)) + min;
+    }
+
+    function sleep(ms) {
+        return new Promise(r => setTimeout(r, ms));
+    }
+
+    async function showAdded(seconds) {
+        const abs  = Math.abs(seconds);
+        const sign = seconds > 0 ? '+' : '−';
+
+        const addedTime = document.createElement('p');
+        addedTime.className = 'addedTime';
+        addedTime.innerText =`${sign}${abs.toFixed(3).replace(/\.?0+$/, '')}s`;
+        document.body.appendChild(addedTime);
+        addedTime.style.display = "block";
+        addedTime.style.left = `${rand(35, 65)}%`;
+        addedTime.style.top  = `${rand(35, 65)}%`;
+        addedTime.style.opacity = '0';
+        await sleep(50);
+        addedTime.style.top = `${rand(35, 65)}%`;
+        addedTime.style.opacity = '1';
+        await sleep(2500);
+        addedTime.style.opacity = '0';
+        await sleep(500);
+        addedTime.remove();
+    }
 
     function clean(s){return String(s??'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
     function apply(state){
@@ -77,7 +120,17 @@
     }
     function startSSE(){
       const sse = new EventSource('./sse');
-      sse.onmessage = (e)=>{ try{ const m=JSON.parse(e.data); if(m&&m.state) apply(m.state);}catch{} };
+        sse.onmessage = (e) => {
+            try {
+                const msg = JSON.parse(e.data);
+                if (msg.type === 'tick' && msg.state) {
+                    apply(msg.state);
+                }
+                if (msg.type === 'event' && msg.event?.type === 'addTime') {
+                    showAdded(msg.event.seconds);
+                }
+            } catch {}
+        };
       sse.onerror   = ()=>{ try{sse.close();}catch{}; setTimeout(startSSE, 3000); };
     }
     bootstrap().then(startSSE);

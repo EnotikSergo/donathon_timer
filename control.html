@@ -1,34 +1,45 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8">
-  <title>Timer Control</title>
-  <link rel="stylesheet" href="css/control.css">
+    <meta charset="UTF-8">
+    <title>Timer Control</title>
+    <link rel="stylesheet" href="css/control.css">
 </head>
 <body>
-  <div id="controlPanel" class="control-panel" role="dialog" aria-modal="true" aria-labelledby="cp-title">
-      <div class="cp-header">
-          <h2 id="cp-title">Панель управления</h2>
-          <button id="togglePanelBtn" class="panel-toggle" aria-label="Открыть панель управления">x</button>
-      </div>
-    <div class="cp-body">
-      <label class="cp-row">
-        <input type="checkbox" id="sleepModeToggle">
-        <span>Режим сна (таймер 0.5x)</span>
-      </label>
-      <label class="cp-row">
-        <input type="checkbox" id="donationModeToggle">
-        <span>Донат‑режим (донаты добавляют время)</span>
-      </label>
-      <label class="cp-row">
-        <span>Сумма за 1 час.</span>
-        <input type="number" id="rubPerHourInput" step="1" min="1" style="width:6em;">
-      </label>
+    <div id="controlPanel" class="control-panel" role="dialog" aria-modal="true" aria-labelledby="cp-title">
+        <div class="cp-header">
+            <h2 id="cp-title">Панель управления</h2>
+            <button id="togglePanelBtn" class="panel-toggle" aria-label="Открыть панель управления">x</button>
+        </div>
+        <div class="cp-body">
+            <label class="cp-row">
+                <input type="checkbox" id="sleepModeToggle">
+                <span>Режим сна (таймер 0.5x)</span>
+            </label>
+            <label class="cp-row">
+                <input type="checkbox" id="donationModeToggle">
+                <span>Донат‑режим (донаты добавляют время)</span>
+            </label>
+            <label class="cp-row">
+                <span>Сумма за 1 час.</span>
+                <input type="number" id="rubPerHourInput" step="1" min="1" style="width:6em;">
+            </label>
+            <div class="cp-row donation-status">
+                <div class="ds-item">
+                    DA <span id="status-da" class="status-dot black"></span>
+                </div>
+                <div class="ds-item">
+                    DY <span id="status-dy" class="status-dot black"></span>
+                </div>
+                <div class="ds-item">
+                    TR <span id="status-tr" class="status-dot black"></span>
+                </div>
+            </div>
+        </div>
+        <div class="cp-footer">
+            <small>Настройки применяются сразу.</small>
+        </div>
     </div>
-    <div class="cp-footer">
-      <small>Настройки применяются сразу.</small>
-    </div>
-  </div>
-  <script src="js/control_window.js"></script>
+    <script src="js/control_window.js"></script>
 </body>
 </html>

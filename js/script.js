@@ -1,9 +1,7 @@
 const timeText = document.getElementById("timeText");
-const pauseIconElement = document.getElementById("pauseIcon");
 const { ipcRenderer } = require('electron');
 
 let endingTime = new Date(Date.now());
-let startTime = new Date(Date.now());
 let pauseTime = 0;
 
 /* sleep-mode vars */
@@ -25,7 +23,6 @@ if (isGreenBackground) {
 }
 
 let countdownEnded = false;
-let users = [];
 let time;
 
 let isPause = true;
@@ -73,8 +70,14 @@ requestAnimationFrame(getNextTime);
 
 const addTime = async (time, s) => {
     endingTime = timeFunc.addSeconds(time, s);
+
+    ipcRenderer.send('overlay:event', {
+        type: 'addTime',
+        seconds: s
+    });
+
     let addedTime = document.createElement("p");
-    addedTime.classList = "addedTime";
+    addedTime.className = "addedTime";
     addedTime.innerText = `${s > 0 ? '+' : ''}${s.toString().split('.')[0]}${s.toString().split('.')[1] ? '.' + s.toString().split('.')[1].slice(0, 3) : ''}s`;
     document.body.appendChild(addedTime);
     addedTime.style.display = "block";
@@ -86,19 +89,6 @@ const addTime = async (time, s) => {
     addedTime.style.opacity = "0";
     await sleep(500);
     addedTime.remove();
-};
-
-const testAddTime = (times, delay) => {
-    let addTimeInterval = setInterval(async () => {
-        if (times > 0) {
-            await sleep(randomInRange(50, delay - 50));
-            addTime(endingTime, 30);
-            --times;
-        }
-        else {
-            clearInterval(addTimeInterval);
-        }
-    }, delay);
 };
 
 document.addEventListener("keydown", (e) => {

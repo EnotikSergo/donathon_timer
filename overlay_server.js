@@ -51,7 +51,6 @@ function startOverlayServer(opts = {}) {
   const server = http.createServer((req, res) => {
     const u = new URL(req.url, 'http://localhost');
 
-    // SSE
     if (u.pathname === basePath + '/sse') {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream; charset=utf-8',
@@ -65,7 +64,6 @@ function startOverlayServer(opts = {}) {
       return;
     }
 
-    // JSON-состояние
     if (u.pathname === basePath + '/state') {
       res.writeHead(200, {
         'Content-Type': 'application/json; charset=utf-8',
@@ -76,7 +74,6 @@ function startOverlayServer(opts = {}) {
       return;
     }
 
-    // Статические файлы
     if (u.pathname.startsWith(basePath)) {
       let filePath = u.pathname.slice(basePath.length).replace(/^\/+/, '');
       if (!filePath) filePath = 'index.html';
@@ -102,14 +99,24 @@ function startOverlayServer(opts = {}) {
     console.log(`[overlay] URL: http://${host}:${port}${basePath}/`);
   });
 
-  // Вызывайте это из своего таймера
-  function push(partial) {
-    latestState = Object.assign({}, latestState, partial || {});
-    const payload = { type: 'tick', state: latestState };
-    for (const res of Array.from(sseClients)) sendSSE(res, payload);
-  }
+    function push(partial) {
+        latestState = Object.assign({}, latestState, partial || {});
+        const payload = { type: 'tick', state: latestState };
 
-  return { server, push, getState: () => latestState };
+        for (const res of Array.from(sseClients)) {
+            sendSSE(res, payload);
+        }
+    }
+
+    function pushEvent(event) {
+        const payload = { type: 'event', event };
+
+        for (const res of Array.from(sseClients)) {
+            sendSSE(res, payload);
+        }
+    }
+
+    return {server, push, pushEvent, getState: () => latestState };
 }
 
 module.exports = { startOverlayServer };

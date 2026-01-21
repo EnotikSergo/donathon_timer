@@ -5,7 +5,7 @@ let overlay;
 let timerWin = null;
 let controlWin = null;
 let settings = {
-  donationModeEnabled: false,
+  donationModeEnabled: true,
   sleepModeEnabled: false,
   secondsAddedPerCurrency: 3.6
 };
@@ -26,7 +26,7 @@ function createWindows() {
 
   controlWin = new BrowserWindow({
     width: 260,
-    height: 249,
+    height: 280,
     title: 'Timer Control',
     autoHideMenuBar: true,
     resizable: false,
@@ -73,6 +73,14 @@ app.whenReady().then(() => {
     });
     createWindows();
 });
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 
-ipcMain.on('overlay:state', (_e, state) => { try { overlay && overlay.push(state); } catch {} });
+ipcMain.on('donation:status', (_e, data) => {
+    if (controlWin && !controlWin.isDestroyed()) {
+        controlWin.webContents.send('donation:status', data);
+    }
+});
+
+ipcMain.on('overlay:state', (_, state) => { try { overlay && overlay.push(state); } catch {} });
+ipcMain.on('overlay:event', (_, event) => { overlay.pushEvent(event); });
+
+app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

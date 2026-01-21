@@ -1,8 +1,8 @@
 // Login Data
-var donationAlertsToken = ""
-var donattyRef = "";
+var donationAlertsToken = "";
+var trulaObsToken = "";
+var donattyWidgetRef = "";
 var donattyWidgetToken = "";
-var donattyZoneOffset = -180;
 
 // Initial Counter Config
 var initialHours = 5
