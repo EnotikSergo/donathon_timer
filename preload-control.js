@@ -1,5 +1,5 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const {contextBridge, ipcRenderer} = require('electron');
 contextBridge.exposeInMainWorld('controlAPI', {
-  saveSettings: (settings) => ipcRenderer.send('save-settings', settings),
-  toggleVisibility: () => ipcRenderer.send('toggle-control-visibility')
+    saveSettings: (settings) => ipcRenderer.send('save-settings', settings),
+    toggleVisibility: () => ipcRenderer.send('toggle-control-visibility')
 });

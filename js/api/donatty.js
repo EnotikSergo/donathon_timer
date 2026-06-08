@@ -28,11 +28,11 @@
                 ? donattyZoneOffset
                 : -180;
 
-        return { ref, widgetToken, zoneOffset };
+        return {ref, widgetToken, zoneOffset};
     }
 
     function startDonatty() {
-        const { ref, widgetToken, zoneOffset } = getDonattyConfig();
+        const {ref, widgetToken, zoneOffset} = getDonattyConfig();
 
         if (!ref || !widgetToken) {
             sendStatus('disconnected');
@@ -43,7 +43,8 @@
         if (donattyEventSource) {
             try {
                 donattyEventSource.close();
-            } catch (_) {}
+            } catch (_) {
+            }
             donattyEventSource = null;
         }
         if (donattyReconnectTimeout) {
@@ -121,7 +122,7 @@
                     (typeof window.donationModeEnabled === 'undefined' ||
                         window.donationModeEnabled)
                 ) {
-                    addTime(endingTime, donation.amount * secondsAddedPerCurrency);
+                    handleDonationWithGoalSystem(donation.amount);
                 }
             };
 
@@ -134,7 +135,8 @@
                 sendStatus('error');
                 try {
                     es.close();
-                } catch (_) {}
+                } catch (_) {
+                }
                 donattyEventSource = null;
                 scheduleDonattyReconnect();
             };
@@ -202,7 +204,7 @@
             return null;
         }
 
-        return { id, amount };
+        return {id, amount};
     }
 
     if (

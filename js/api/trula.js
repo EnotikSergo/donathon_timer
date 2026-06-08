@@ -61,7 +61,6 @@
                     return;
                 }
 
-                // Фильтр официально рекомендованный Trula
                 if (
                     msg.type !== 'newOrder' ||
                     msg.eventType !== 'newOrder' ||
@@ -81,10 +80,7 @@
                     (typeof window.donationModeEnabled === 'undefined'
                         || window.donationModeEnabled)
                 ) {
-                    addTime(
-                        endingTime,
-                        donation.amount * secondsAddedPerCurrency
-                    );
+                    handleDonationWithGoalSystem(donation.amount);
                 }
             };
 
@@ -122,7 +118,6 @@
     function normalizeOrder(body) {
         if (!body || typeof body !== 'object') return null;
 
-        // Интересуют только донаты
         if (body.type !== 'donate') return null;
 
         const id = body.id;

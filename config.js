@@ -25,28 +25,28 @@ var rublesPerHour = 1000;
 // Donation alerts
 // This value will be multiplied by donation amount
 // Donation is converted automatically to the MAIN donation alerts account currency
-var secondsAddedPerCurrency = 60 * 60 / rublesPerHour; 
+var secondsAddedPerCurrency = 60 * 60 / rublesPerHour;
 
 
 // Runtime settings
 try {
-  const ls = window.localStorage;
-  if (ls.getItem('secondsAddedPerCurrency') !== null) {
-    const v = parseFloat(ls.getItem('secondsAddedPerCurrency'));
-    if (!Number.isNaN(v)) secondsAddedPerCurrency = v;
-  }
+    const ls = window.localStorage;
+    if (ls.getItem('secondsAddedPerCurrency') !== null) {
+        const v = parseFloat(ls.getItem('secondsAddedPerCurrency'));
+        if (!Number.isNaN(v)) secondsAddedPerCurrency = v;
+    }
 
-  if (ls.getItem('donationModeEnabled') !== null) {
-    window.donationModeEnabled = (ls.getItem('donationModeEnabled') === 'true');
-  } else {
-    window.donationModeEnabled = false;
-  }
-  if (ls.getItem('sleepModeEnabled') !== null) {
-    window.sleepModeEnabled = (ls.getItem('sleepModeEnabled') === 'true');
-  } else {
-    window.sleepModeEnabled = false;
-  }
+    if (ls.getItem('donationModeEnabled') !== null) {
+        window.donationModeEnabled = (ls.getItem('donationModeEnabled') === 'true');
+    } else {
+        window.donationModeEnabled = false;
+    }
+    if (ls.getItem('sleepModeEnabled') !== null) {
+        window.sleepModeEnabled = (ls.getItem('sleepModeEnabled') === 'true');
+    } else {
+        window.sleepModeEnabled = false;
+    }
 } catch (e) {
-  window.donationModeEnabled = (typeof window.donationModeEnabled === 'boolean') ? window.donationModeEnabled : false;
-  window.sleepModeEnabled = (typeof window.sleepModeEnabled === 'boolean') ? window.sleepModeEnabled : false;
+    window.donationModeEnabled = (typeof window.donationModeEnabled === 'boolean') ? window.donationModeEnabled : false;
+    window.sleepModeEnabled = (typeof window.sleepModeEnabled === 'boolean') ? window.sleepModeEnabled : false;
 }

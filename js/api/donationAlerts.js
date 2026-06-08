@@ -60,14 +60,14 @@ function connectDonationAlerts() {
             if (!donate.id || donate.id === lastDonationId) return;
             lastDonationId = donate.id;
 
-            const { amount_main, alert_type } = donate;
+            const {amount_main, alert_type} = donate;
 
             if (
                 alert_type == '1' &&
                 (typeof window.donationModeEnabled === 'undefined'
                     || window.donationModeEnabled)
             ) {
-                addTime(endingTime, amount_main * secondsAddedPerCurrency);
+                handleDonationWithGoalSystem(amount_main);
             }
 
         } catch (e) {

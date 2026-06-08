@@ -9,12 +9,12 @@ timeFunc = {
         return time;
     },
 
-    addSeconds (time, s) {
+    addSeconds(time, s) {
         time.setTime(time.getTime() + (s * 1000));
         return time;
     },
 
-    addMilliseconds (time, s) {
+    addMilliseconds(time, s) {
         time.setTime(time.getTime() + s);
         return time;
     },
@@ -23,8 +23,7 @@ timeFunc = {
         let hours;
         if (typeof time !== 'number') {
             hours = time.getHours().toString();
-        }
-        else {
+        } else {
             hours = Math.floor(time / (1000 * 60 * 60)).toString();
         }
         hours = (hours.length < 2) ? `0${hours}` : hours;
@@ -35,8 +34,7 @@ timeFunc = {
         let minutes;
         if (typeof time !== 'number') {
             minutes = time.getMinutes().toString();
-        }
-        else {
+        } else {
             minutes = Math.floor((time % (1000 * 60 * 60)) / (1000 * 60)).toString();
         }
         minutes = (minutes.length < 2) ? `0${minutes}` : minutes;
@@ -47,8 +45,7 @@ timeFunc = {
         let seconds;
         if (typeof time !== 'number') {
             seconds = time.getSeconds().toString();
-        }
-        else {
+        } else {
             seconds = Math.floor((time % (1000 * 60)) / 1000).toString();
         }
         seconds = (seconds.length < 2) ? `0${seconds}` : seconds;
