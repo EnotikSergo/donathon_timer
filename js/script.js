@@ -27,7 +27,7 @@ let showStopwatchState = false;
 let visibilityTimeout;
 let hideTimeout;
 
-const TEST_MODE = true;
+const TEST_MODE = false;
 const SHOW_DURATION = 15000;
 const THREE_DAYS_IN_SECONDS = 3 * 24 * 3600; // 259200 секунд
 
@@ -44,6 +44,7 @@ const goalBarFill = document.getElementById('goalBarFill');
 
 const stopwatchEl = document.getElementById("stopwatchText");
 const timeTextEl = document.getElementById("timeText");
+const pauseIconElement = document.getElementById("pauseIcon");
 
 
 function formatStopwatch(totalSeconds, isEnded) {
@@ -104,6 +105,13 @@ ipcRenderer.on('settings:update', (_e, s) => {
 
     if (typeof s.dynamicPriceIncreaseEnabled !== 'undefined') window.dynamicPriceIncreaseEnabled = s.dynamicPriceIncreaseEnabled;
     if (typeof s.maxTimerTier !== 'undefined') window.maxTimerTier = s.maxTimerTier;
+
+    if (typeof s.sleepModeEnabled !== 'undefined') {
+        const sleepMoon = document.getElementById('sleepMoon');
+        if (sleepMoon) {
+            sleepMoon.style.opacity = s.sleepModeEnabled ? "1" : "0";
+        }
+    }
     updateRubPerHourUI();
     checkPriceTiers();
 });
@@ -132,27 +140,34 @@ function scheduleStopwatchVisibility() {
     }, nextInterval);
 }
 
-const resetTime = () => {
+const resetTime = (isStartup = false) => {
     endingTime = new Date(new Date(Date.now()) - pauseTime);
     endingTime = timeFunc.addHours(endingTime, initialHours);
     endingTime = timeFunc.addMinutes(endingTime, initialMinutes);
     endingTime = timeFunc.addSeconds(endingTime, initialSeconds);
     countdownEnded = false;
-    elapsedSeconds = 0;
-    showStopwatchState = false;
-    window.maxTimerTier = 0;
-    lastPriceTier = 0;
-    ipcRenderer.send('settings:set', {
-        maxTimerTier: 0,
-        secondsAddedPerCurrency: 3.6
-    });
+
+    if (!isStartup) {
+        elapsedSeconds = 0;
+        showStopwatchState = false;
+        window.maxTimerTier = 0;
+        lastPriceTier = 0;
+        ipcRenderer.send('settings:set', {
+            maxTimerTier: 0,
+            secondsAddedPerCurrency: 3.6
+        });
+    }
     hideStopwatch();
     clearTimeout(visibilityTimeout);
     clearTimeout(hideTimeout);
     scheduleStopwatchVisibility();
 }
 
-resetTime();
+resetTime(true);
+clearTimeout(visibilityTimeout);
+clearTimeout(hideTimeout);
+showStopwatchState = true;
+showStopwatch()
 
 if (fs.existsSync(timerFilePath)) {
     try {
@@ -226,7 +241,7 @@ setInterval(() => {
         } catch (e) {
         }
     } else {
-        if (showStopwatchState && !isPause && window.donationModeEnabled) {
+        if (showStopwatchState && window.donationModeEnabled) {
             showStopwatch();
         } else {
             hideStopwatch();
@@ -244,7 +259,7 @@ function checkPriceTiers() {
     const highestTier = Math.max(swTiers, tmTiers);
     const expectedRubPerHour = 1000 + (highestTier * 1000);
 
-    if (expectedRubPerHour !== rublesPerHour) {
+    if (expectedRubPerHour > rublesPerHour) {
         ipcRenderer.send('settings:set', {
             maxTimerTier: tmTiers,
             secondsAddedPerCurrency: 3600 / expectedRubPerHour
@@ -260,7 +275,8 @@ ipcRenderer.on('goal:activate', (_e, data) => {
 
     goalText.innerText = `Сбор: 0 / ${Math.round(goalTargetAmount)} руб. (${goalTargetHours}ч)`;
     goalBarFill.style.width = '0%';
-    goalContainer.classList.add('active');
+    goalContainer.style.transform = "translateX(-50%) translateY(-350%)";
+    goalContainer.style.opacity = "1";
 });
 
 ipcRenderer.on('goal:deactivate', () => {
@@ -269,7 +285,8 @@ ipcRenderer.on('goal:deactivate', () => {
 
 function closeGoalUI() {
     isGoalActive = false;
-    goalContainer.classList.remove('active');
+    goalContainer.style.transform = "translateX(-50%) translateY(-200%)";
+    goalContainer.style.opacity = "0";
     ipcRenderer.send('goal:ended');
 }
 
@@ -387,7 +404,7 @@ const getNextTime = () => {
 
     const shouldShowStopwatch = countdownEnded
         ? window.donationModeEnabled
-        : (showStopwatchState && !isPause && window.donationModeEnabled);
+        : (showStopwatchState && window.donationModeEnabled);
 
     ipcRenderer.send('overlay:state', {
         remaining: time,
@@ -397,7 +414,9 @@ const getNextTime = () => {
         showStopwatch: shouldShowStopwatch,
         isGoalActive: isGoalActive,
         goalText: isGoalActive ? goalText.innerText : "Сбор: 0 / 0 руб",
-        goalPercentage: isGoalActive ? Math.min((goalCurrentAmount / goalTargetAmount) * 100, 100) : 0
+        goalPercentage: isGoalActive ? Math.min((goalCurrentAmount / goalTargetAmount) * 100, 100) : 0,
+        isPause: isPause,
+        sleepModeEnabled: window.sleepModeEnabled
     });
 
     requestAnimationFrame(getNextTime);
@@ -452,11 +471,27 @@ document.addEventListener("keydown", (e) => {
         case "Space":
             prevPauseDate = isPause ? null : new Date(Date.now());
             isPause = !isPause;
+            if (window.pauseIconTimeout) {
+                clearTimeout(window.pauseIconTimeout);
+            }
 
             if (isPause) {
-                hideStopwatch();
-            } else if (showStopwatchState && window.donationModeEnabled) {
-                showStopwatch();
+                window.pauseIconTimeout = setTimeout(() => {
+                    pauseIconElement.style.opacity = "1";
+                }, 700);
+            } else {
+                pauseIconElement.style.opacity = "0";
+            }
+
+            if (isPause && window.donationModeEnabled) {
+                clearTimeout(visibilityTimeout);
+                clearTimeout(hideTimeout);
+                showStopwatchState = true;
+            } else if (window.donationModeEnabled) {
+                showStopwatchState = false;
+                clearTimeout(visibilityTimeout);
+                clearTimeout(hideTimeout);
+                scheduleStopwatchVisibility();
             }
             return;
         case "KeyO":

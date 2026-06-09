@@ -20,13 +20,12 @@
             width: 100vw;
             height: 100vh;
             position: relative;
-            background-color: limegreen;
         }
 
         :root {
             --background-color: rgb(45, 45, 44);
             --text-color: #fff;
-            --icon-color: #424850;
+            --icon-color: #fff;
         }
 
         #container {
@@ -54,12 +53,6 @@
             font-weight: 600;
             z-index: 1;
             cursor: default;
-        }
-
-        img {
-            position: absolute;
-            top: 0;
-            bottom: 0;
         }
 
         .addedTime {
@@ -125,16 +118,14 @@
             opacity: 0;
             pointer-events: none;
         }
-        #goalContainer.active {
-            transform: translateX(-50%) translateY(-350%);
-            opacity: 1;
-        }
+
         #goalText {
             color: #fff;
             font-size: 1.95rem;
             font-weight: 700;
-            text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
         }
+
         #goalBarBg {
             width: 100%;
             height: 10px;
@@ -144,20 +135,54 @@
             margin-top: 4px;
             border: 1px solid rgba(255, 255, 255, 0.05);
         }
+
         #goalBarFill {
             width: 0%;
             height: 100%;
             background: linear-gradient(90deg, #00f2fe 0%, #4facfe 100%);
             transition: width 0.3s ease-out;
         }
+
+        #pauseIcon {
+            position: absolute;
+            border-left: 10px solid var(--icon-color);
+            border-right: 10px solid var(--icon-color);
+            width: 8px;
+            height: 30px;
+            margin-right: 80%;
+            transition: opacity 0.5s ease
+        }
+
+        #sleepMoon {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scaleX(-1);
+            opacity: 0;
+            transition: opacity 0.6s ease;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        #sleepMoon svg {
+            width: 95px;
+            height: 95px;
+            fill: rgba(255, 220, 100, 0.25);
+            filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.05));
+        }
     </style>
 </head>
 <body>
 <div id="container">
     <div id="textDiv">
+        <div id="sleepMoon">
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+            </svg>
+        </div>
+        <div id="pauseIcon"></div>
         <p id="timeText">00:00:00</p>
         <span id="stopwatchText">прошло 0 д 0 ч 0 м 0 с</span>
-        <div id="subtitle"></div>
     </div>
     <span id="rubPerHourText">1000р = 1 час</span>
     <div id="goalContainer">
@@ -169,7 +194,15 @@
 </div>
 <script>
     const elT = document.getElementById('timeText');
-    const elS = document.getElementById('subtitle');
+    let currentPauseState = null;
+    let currentRubPreHourState = null;
+    let currentShowStopWatchState = null;
+    let currentStopWatchTextState = null;
+    let currentRemainingTimeState = null;
+    let currentGoalState = null;
+    let currentGoalPrecentageState = null;
+    let currentGoalTextState = null;
+    let currentSleepState = null;
 
     function rand(min, max) {
         return Math.floor(Math.random() * (max - min)) + min;
@@ -200,30 +233,32 @@
         addedTime.remove();
     }
 
-    function clean(s) {
-        return String(s ?? '').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    }
 
     function apply(state) {
         if (!state) return;
-        if (state.remaining != null) elT.textContent = state.remaining;
-        if (state.subtitle != null) elS.textContent = clean(state.subtitle);
+        if (state.remaining != null && state.remaining !== currentRemainingTimeState) {
+            currentRemainingTimeState = state.remaining;
+            elT.textContent = state.remaining;
+        }
         if (state.color != null) document.documentElement.style.setProperty('--fg', state.color);
 
-        if (state.showRubPerHour !== undefined && state.rublesPerHour !== undefined) {
+        if (state.showRubPerHour !== undefined && state.rublesPerHour !== undefined && state.rublesPerHour !== currentRubPreHourState) {
+            currentRubPreHourState = state.rublesPerHour;
             const elRub = document.getElementById('rubPerHourText');
             if (elRub) {
                 elRub.textContent = `${state.rublesPerHour}р = 1 час`;
                 elRub.style.display = state.showRubPerHour ? 'block' : 'none';
             }
         }
-        if (state.showStopwatch !== undefined && state.stopwatchText !== undefined) {
-            const elStopwatch = document.getElementById('stopwatchText');
-            const elTimeText = document.getElementById('timeText');
-
-            if (elStopwatch) {
+        const elStopwatch = document.getElementById('stopwatchText');
+        const elTimeText = document.getElementById('timeText');
+        if (elStopwatch) {
+            if (state.stopwatchText !== undefined && state.stopwatchText !== currentStopWatchTextState) {
+                currentStopWatchTextState = state.stopwatchText;
                 elStopwatch.textContent = state.stopwatchText;
-
+            }
+            if (state.showStopwatch !== undefined && state.showStopwatch !== currentShowStopWatchState) {
+                currentShowStopWatchState = state.showStopwatch;
                 if (elTimeText && !elTimeText.style.transition) {
                     elTimeText.style.transition = 'font-size 0.5s ease';
                 }
@@ -253,15 +288,49 @@
             const gc = document.getElementById('goalContainer');
             const gt = document.getElementById('goalText');
             const gb = document.getElementById('goalBarFill');
-
             if (gc) {
-                if (state.isGoalActive) {
-                    gc.classList.add('active');
-                    if (gt) gt.innerText = state.goalText || '';
+                if (state.goalPercentage !== currentGoalPrecentageState) {
+                    currentGoalPrecentageState = state.goalPercentage;
                     if (gb) gb.style.width = `${state.goalPercentage || 0}%`;
-                } else {
-                    gc.classList.remove('active');
                 }
+                if (state.goalText !== currentGoalTextState) {
+                    currentGoalTextState = state.goalText;
+                    if (gt) gt.innerText = state.goalText || '';
+                }
+                if (state.isGoalActive !== currentGoalState) {
+                    currentGoalState = state.isGoalActive;
+                    if (state.isGoalActive) {
+                        gc.style.transform = "translateX(-50%) translateY(-350%)";
+                        gc.style.opacity = "1";
+                    } else {
+                        gc.style.transform = "translateX(-50%) translateY(-200%)";
+                        gc.style.opacity = "0";
+                    }
+
+                }
+            }
+        }
+        if (state.isPause !== undefined && state.isPause !== currentPauseState) {
+            currentPauseState = state.isPause;
+            const pauseIcon = document.getElementById('pauseIcon');
+            if (window.pauseIconTimeout) {
+                clearTimeout(window.pauseIconTimeout);
+            }
+
+            if (state.isPause) {
+                window.pauseIconTimeout = setTimeout(() => {
+                    pauseIcon.style.opacity = "1";
+                }, 700);
+            } else {
+                pauseIcon.style.opacity = "0";
+            }
+        }
+        if (state.sleepModeEnabled !== undefined && state.sleepModeEnabled !== currentSleepState) {
+            currentSleepState = state.sleepModeEnabled;
+
+            const sleepMoon = document.getElementById('sleepMoon');
+            if (sleepMoon) {
+                sleepMoon.style.opacity = state.sleepModeEnabled ? "1" : "0";
             }
         }
     }

@@ -10,13 +10,14 @@ const goalHoursInput = document.getElementById('goalHoursInput');
 const goalToggleBtn = document.getElementById('goalToggleBtn');
 let isGoalActiveLocal = false;
 
-goalToggleBtn.addEventListener('change', () => {});
+goalToggleBtn.addEventListener('change', () => {
+});
 
 goalToggleBtn.addEventListener('click', () => {
     if (!isGoalActiveLocal) {
         const hours = parseFloat(goalHoursInput.value);
         if (isNaN(hours) || hours <= 0) return;
-        ipcRenderer.send('goal:activate', { hours });
+        ipcRenderer.send('goal:activate', {hours});
     } else {
         ipcRenderer.send('goal:deactivate');
     }

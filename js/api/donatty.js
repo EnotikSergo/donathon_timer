@@ -177,7 +177,6 @@
             obj.uuid ||
             null;
 
-        // Возможные варианты полей суммы
         const amountKeys = [
             'amount_main',
             'amount',
