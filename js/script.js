@@ -385,9 +385,16 @@ const getNextTime = () => {
         if (canIncreaseTimeAfterStop) {
             endingTime = new Date(currentTime);
         } else {
-            countdownEnded = true;
-            if (isGoalActive) {
-                closeGoalUI();
+            if (!countdownEnded) {
+                countdownEnded = true;
+                if (isGoalActive) {
+                    closeGoalUI();
+                }
+                window.maxTimerTier = 0;
+
+                ipcRenderer.send('settings:set', {
+                    maxTimerTier: 0
+                });
             }
         }
         time = "00:00:00";
