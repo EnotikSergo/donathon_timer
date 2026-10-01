@@ -8,6 +8,7 @@ const rubPerHourInput = document.getElementById('rubPerHourInput');
 const dynamicPriceToggle = document.getElementById('dynamicPriceToggle');
 const goalHoursInput = document.getElementById('goalHoursInput');
 const goalToggleBtn = document.getElementById('goalToggleBtn');
+const dynamicPriceStepInput = document.getElementById('dynamicPriceStepInput');
 let isGoalActiveLocal = false;
 
 goalToggleBtn.addEventListener('change', () => {
@@ -38,7 +39,7 @@ ipcRenderer.on('goal:status', (_e, active) => {
 
 const indicators = {
     DA: document.getElementById('status-da'),
-    DY: document.getElementById('status-dy'),
+    DX: document.getElementById('status-dx'),
     TR: document.getElementById('status-tr')
 };
 
@@ -58,9 +59,14 @@ function apply(s) {
     if (typeof s.showRubPerHour !== 'undefined')
         showRubPerHourToggle.checked = !!s.showRubPerHour;
 
-    if (typeof s.secondsAddedPerCurrency !== 'undefined' && s.secondsAddedPerCurrency > 0) {
-        const rubPerHour = 3600 / s.secondsAddedPerCurrency;
-        rubPerHourInput.value = Math.round(rubPerHour);
+    if (typeof s.baseRubPerHour !== 'undefined') {
+        rubPerHourInput.value = Math.round(s.baseRubPerHour);
+    } else if (typeof s.secondsAddedPerCurrency !== 'undefined' && s.secondsAddedPerCurrency > 0) {
+        rubPerHourInput.value = Math.round(3600 / s.secondsAddedPerCurrency);
+    }
+
+    if (typeof s.dynamicPriceStep !== 'undefined') {
+        dynamicPriceStepInput.value = Math.round(s.dynamicPriceStep);
     }
 
     if (typeof s.dynamicPriceIncreaseEnabled !== 'undefined')
@@ -86,8 +92,16 @@ rubPerHourInput.addEventListener('input', () => {
     const rub = parseFloat(rubPerHourInput.value);
     if (!isNaN(rub) && rub > 0) {
         ipcRenderer.send('settings:set', {
+            baseRubPerHour: rub,
             secondsAddedPerCurrency: 3600 / rub
         });
+    }
+});
+
+dynamicPriceStepInput.addEventListener('input', () => {
+    const step = parseFloat(dynamicPriceStepInput.value);
+    if (!isNaN(step) && step > 0) {
+        ipcRenderer.send('settings:set', { dynamicPriceStep: step });
     }
 });
 

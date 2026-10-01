@@ -14,7 +14,9 @@ let settings = {
     secondsAddedPerCurrency: 3.6,
     showRubPerHour: true,
     dynamicPriceIncreaseEnabled: true,
-    maxTimerTier: 0
+    maxTimerTier: 0,
+    baseRubPerHour: 1000,
+    dynamicPriceStep: 1000
 };
 
 if (fs1.existsSync(settingsFilePath)) {
@@ -46,7 +48,7 @@ function createWindows() {
 
     controlWin = new BrowserWindow({
         width: 260,
-        height: 446,
+        height: 516,
         title: 'Timer Control',
         autoHideMenuBar: true,
         resizable: false,
@@ -67,7 +69,9 @@ function createWindows() {
         try {
             const dataToSave = {
                 dynamicPriceIncreaseEnabled: settings.dynamicPriceIncreaseEnabled,
-                maxTimerTier: settings.maxTimerTier
+                maxTimerTier: settings.maxTimerTier,
+                baseRubPerHour: settings.baseRubPerHour,
+                dynamicPriceStep: settings.dynamicPriceStep
             };
             fs1.writeFileSync(settingsFilePath, JSON.stringify(dataToSave, null, 2), 'utf8');
         } catch (e) {

@@ -26,7 +26,11 @@
         </label>
         <label class="cp-row">
             <input type="checkbox" id="dynamicPriceToggle">
-            <span>Авто +1000р каждые 3 дня</span>
+            <span>Авто увеличение каждые 3 дня</span>
+        </label>
+        <label class="cp-row">
+            <span>Сумма увеличения</span>
+            <input type="number" id="dynamicPriceStepInput" step="1" min="1" value="1000" style="width:6em; margin-right: 12px;">
         </label>
         <label class="cp-row">
             <span>Сумма за 1 час</span>
@@ -42,7 +46,7 @@
                 DA <span id="status-da" class="status-dot black"></span>
             </div>
             <div class="ds-item">
-                DY <span id="status-dy" class="status-dot black"></span>
+                DX <span id="status-dx" class="status-dot black"></span>
             </div>
             <div class="ds-item">
                 TR <span id="status-tr" class="status-dot black"></span>

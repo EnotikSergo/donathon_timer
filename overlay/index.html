@@ -77,11 +77,14 @@
             display: none;
             position: absolute;
             bottom: -70px;
-            text-align: center;
-            width: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: max-content;
             white-space: nowrap;
-            z-index: 1;
+            z-index: 1000;
             text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+            user-select: none;
+            cursor: grab;
         }
 
         span#stopwatchText {
@@ -203,6 +206,17 @@
     let currentGoalPrecentageState = null;
     let currentGoalTextState = null;
     let currentSleepState = null;
+
+    const rubText = document.getElementById('rubPerHourText');
+
+    let isDragging = false;
+    let startX, startY, initialLeft, initialTop;
+
+    const savedLeft = localStorage.getItem('rubTextLeft');
+    const savedTop = localStorage.getItem('rubTextTop');
+    const savedFontSize = localStorage.getItem('rubTextFontSize');
+
+    let currentFontSize = savedFontSize ? parseFloat(savedFontSize) : 3.7;
 
     function rand(min, max) {
         return Math.floor(Math.random() * (max - min)) + min;
@@ -365,6 +379,76 @@
             ;setTimeout(startSSE, 3000);
         };
     }
+
+    if (savedFontSize) {
+        rubText.style.fontSize = `${currentFontSize}rem`;
+    }
+
+    if (savedLeft && savedTop) {
+        rubText.style.left = savedLeft;
+        rubText.style.top = savedTop;
+        rubText.style.bottom = 'auto';
+        rubText.style.transform = 'none';
+    }
+
+    rubText.addEventListener('mousedown', (e) => {
+        isDragging = true;
+
+        const rect = rubText.getBoundingClientRect();
+        const parentRect = rubText.parentElement.getBoundingClientRect();
+
+        if (rubText.style.bottom !== 'auto') {
+            rubText.style.left = (rect.left - parentRect.left) + 'px';
+            rubText.style.top = (rect.top - parentRect.top) + 'px';
+            rubText.style.bottom = 'auto';
+            rubText.style.transform = 'none';
+        }
+
+        startX = e.clientX;
+        startY = e.clientY;
+        initialLeft = parseFloat(rubText.style.left) || 0;
+        initialTop = parseFloat(rubText.style.top) || 0;
+
+        rubText.style.cursor = 'grabbing';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+
+        rubText.style.left = `${initialLeft + dx}px`;
+        rubText.style.top = `${initialTop + dy}px`;
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isDragging) {
+            isDragging = false;
+            rubText.style.cursor = 'grab';
+
+            localStorage.setItem('rubTextLeft', rubText.style.left);
+            localStorage.setItem('rubTextTop', rubText.style.top);
+        }
+    });
+
+    rubText.addEventListener('wheel', (e) => {
+        e.preventDefault();
+
+        const scaleSpeed = 0.2;
+
+        if (e.deltaY < 0) {
+            currentFontSize += scaleSpeed;
+        } else {
+            currentFontSize -= scaleSpeed;
+        }
+
+        if (currentFontSize < 0.5) currentFontSize = 0.5;
+
+        rubText.style.fontSize = `${currentFontSize}rem`;
+
+        localStorage.setItem('rubTextFontSize', currentFontSize);
+    });
 
     bootstrap().then(startSSE);
 </script>

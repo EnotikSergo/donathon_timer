@@ -163,6 +163,7 @@ const resetTime = (isStartup = false) => {
     scheduleStopwatchVisibility();
 }
 
+updateRubPerHourUI()
 resetTime(true);
 clearTimeout(visibilityTimeout);
 clearTimeout(hideTimeout);
@@ -257,9 +258,13 @@ function checkPriceTiers() {
     const tmTiers = window.maxTimerTier || 0;
 
     const highestTier = Math.max(swTiers, tmTiers);
-    const expectedRubPerHour = 1000 + (highestTier * 1000);
 
-    if (expectedRubPerHour > rublesPerHour) {
+    const basePrice = savedSettings.baseRubPerHour || 1000;
+    const stepPrice = savedSettings.dynamicPriceStep || 1000;
+
+    const expectedRubPerHour = basePrice + (highestTier * stepPrice);
+
+    if (expectedRubPerHour !== rublesPerHour) {
         ipcRenderer.send('settings:set', {
             maxTimerTier: tmTiers,
             secondsAddedPerCurrency: 3600 / expectedRubPerHour
