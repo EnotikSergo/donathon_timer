@@ -3,11 +3,12 @@ const {startOverlayServer} = require('./overlay_server');
 const fs1 = require('fs');
 const path1 = require('path');
 
-const settingsFilePath = path1.join(__dirname, 'settings.json');
+const settingsFilePath = path1.join(__dirname, 'saves/settings.json');
 
 let overlay;
 let timerWin = null;
 let controlWin = null;
+
 let settings = {
     donationModeEnabled: true,
     sleepModeEnabled: false,
@@ -30,6 +31,7 @@ if (fs1.existsSync(settingsFilePath)) {
     } catch (e) {
         console.error("Не удалось прочесть файл настроек:", e);
     }
+
 }
 
 function createWindows() {
@@ -90,8 +92,7 @@ function createWindows() {
     timerWin.on('closed', () => {
         try {
             if (controlWin && !controlWin.isDestroyed()) controlWin.close();
-        } catch (e) {
-        }
+        } catch (e) {}
         timerWin = null;
         controlWin = null;
     });

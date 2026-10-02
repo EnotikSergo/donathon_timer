@@ -63,7 +63,7 @@ function connectDonationAlerts() {
             const {amount_main, alert_type} = donate;
 
             if (
-                alert_type == '1' &&
+                alert_type === '1' &&
                 (typeof window.donationModeEnabled === 'undefined'
                     || window.donationModeEnabled)
             ) {

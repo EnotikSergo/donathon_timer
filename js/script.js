@@ -2,9 +2,10 @@ const timeText = document.getElementById("timeText");
 const {ipcRenderer} = require('electron');
 const fs = require('fs');
 const path = require('path');
+const path1 = require("path");
 
-const timerFilePath = path.join(__dirname, 'timer_value.txt');
-const stopwatchFilePath = path.join(__dirname, 'stopwatch_save.txt');
+const timerFilePath = path.join(__dirname, 'saves/timer_value.txt');
+const stopwatchFilePath = path.join(__dirname, 'saves/stopwatch_save.txt');
 
 let endingTime = new Date(Date.now());
 let pauseTime = 0;
@@ -251,6 +252,7 @@ setInterval(() => {
 }, 1000);
 
 function checkPriceTiers() {
+    let settingsFilePath = path.join(__dirname, 'saves/settings.json');
     const savedSettings = JSON.parse(fs.readFileSync(settingsFilePath, 'utf8'));
     if (!savedSettings.dynamicPriceIncreaseEnabled) return;
 
@@ -508,6 +510,9 @@ document.addEventListener("keydown", (e) => {
             return;
         case "KeyO":
             ipcRenderer.send('control:toggle');
+            return;
+        case "KeyL":
+            ipcRenderer.send('history:toggle');
             return;
     }
 });
