@@ -3,6 +3,21 @@ var donationAlertsToken = "";
 var trulaObsToken = "";
 var donateXToken = "";
 
+try {
+    const fs = require('fs');
+    const path = require('path');
+    const tokensPath = path.join(__dirname, 'saves', 'auth_tokens.json');
+
+    if (fs.existsSync(tokensPath)) {
+        const t = JSON.parse(fs.readFileSync(tokensPath, 'utf8'));
+        donationAlertsToken = t.donationAlerts || "";
+        trulaObsToken       = t.trula || "";
+        donateXToken        = t.donateX || "";
+    }
+} catch (e) {
+    console.error('[config] Не удалось прочитать токены:', e);
+}
+
 // Initial Counter Config
 var initialHours = 5
 var initialMinutes = 0

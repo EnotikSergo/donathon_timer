@@ -26,6 +26,7 @@
             if (isConnected) {
                 isConnected = false;
                 sendStatus('disconnected');
+                console.warn('[DX] Токен отсутствует в config.js');
             }
             schedulePoll();
             return;
@@ -91,7 +92,6 @@
         if (amount <= 0) return;
 
         if (typeof handleDonationWithGoalSystem === 'function') {
-            console.log(`[DX] Получен донат: ${amount} руб. от ${donation.username}`);
             handleDonationWithGoalSystem(amount);
         }
 

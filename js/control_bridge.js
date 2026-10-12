@@ -20,6 +20,10 @@
 
         ipcRenderer.invoke('settings:get').then(apply);
         ipcRenderer.on('settings:update', (_e, s) => apply(s));
+        ipcRenderer.on('auth-tokens:updated', () => {
+            console.log('[Bridge] Токены обновлены. Перезагрузка окна таймера для применения...');
+            window.location.reload();
+        });
 
     } catch (e) {
     }

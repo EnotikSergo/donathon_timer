@@ -1,9 +1,21 @@
-const {app, BrowserWindow, ipcMain} = require('electron');
+const {app, BrowserWindow, ipcMain, shell} = require('electron');
 const {startOverlayServer} = require('./overlay_server');
 const fs1 = require('fs');
 const path1 = require('path');
 
 const settingsFilePath = path1.join(__dirname, 'saves/settings.json');
+const tokensFilePath = path1.join(__dirname, 'saves/auth_tokens.json');
+
+function readAuthTokens() {
+    try {
+        if (fs1.existsSync(tokensFilePath)) {
+            return JSON.parse(fs1.readFileSync(tokensFilePath, 'utf8'));
+        }
+    } catch (e) {
+        console.error('[auth] Не удалось прочитать токены:', e);
+    }
+    return {};
+}
 
 let overlay;
 let timerWin = null;
@@ -49,8 +61,8 @@ function createWindows() {
     timerWin.loadFile('index.html');
 
     controlWin = new BrowserWindow({
-        width: 260,
-        height: 516,
+        width: 520,
+        height: 520,
         title: 'Timer Control',
         autoHideMenuBar: true,
         resizable: false,
@@ -103,13 +115,66 @@ function createWindows() {
     controlWin.webContents.once('did-finish-load', () => {
         controlWin.webContents.send('settings:update', settings);
     });
+
+    ipcMain.handle('auth-tokens:get', () => readAuthTokens());
+
+    ipcMain.handle('auth-tokens:save', (_e, payload) => {
+        if (!payload || !payload.service) return false;
+
+        const all = readAuthTokens();
+        all[payload.service] = (payload.token || '').trim();
+
+        try {
+            fs1.writeFileSync(tokensFilePath, JSON.stringify(all, null, 2), 'utf8');
+
+            if (timerWin && !timerWin.isDestroyed()) {
+                timerWin.webContents.send('auth-tokens:updated');
+            }
+
+            return true;
+        } catch (e) {
+            console.error('[auth] Не удалось сохранить токен:', e);
+            return false;
+        }
+    });
+
+    ipcMain.on('auth-tokens:request', (_e, service) => {
+        if (service === 'donationAlerts') {
+            const authUrl = `https://www.donationalerts.com/oauth/authorize?client_id=21868&redirect_uri=http://localhost:41701/auth/da&response_type=token&scope=oauth-user-show%20oauth-donation-subscribe`;
+            shell.openExternal(authUrl);
+        } else {
+            let url = "";
+            if (service === 'donateX') url = 'https://donatex.gg/streamer/settings';
+            else if (service === 'trula') url = 'https://trula.io/lk/widgets/control-panel';
+            if (url) shell.openExternal(url);
+        }
+    });
 }
 
 app.whenReady().then(() => {
     overlay = startOverlayServer({
         port: process.env.OVERLAY_PORT || 41701,
         host: '0.0.0.0',
-        basePath: '/overlay'
+        basePath: '/overlay',
+        onAuth: (service, token) => {
+            console.log(`[Auth] Получен токен для сервиса: ${service}`);
+
+            const all = readAuthTokens();
+            all[service] = token;
+            try {
+                fs1.writeFileSync(tokensFilePath, JSON.stringify(all, null, 2), 'utf8');
+            } catch (e) {
+                console.error('[Auth] Ошибка сохранения токена:', e);
+            }
+
+            if (controlWin && !controlWin.isDestroyed()) {
+                controlWin.webContents.send('auth-token-received', { service, token });
+            }
+
+            if (timerWin && !timerWin.isDestroyed()) {
+                timerWin.webContents.send('auth-tokens:updated');
+            }
+        }
     });
     createWindows();
 });

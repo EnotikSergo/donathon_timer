@@ -9,6 +9,13 @@ const dynamicPriceToggle = document.getElementById('dynamicPriceToggle');
 const goalHoursInput = document.getElementById('goalHoursInput');
 const goalToggleBtn = document.getElementById('goalToggleBtn');
 const dynamicPriceStepInput = document.getElementById('dynamicPriceStepInput');
+const serviceSelect = document.getElementById('serviceSelect');
+const tokenInput = document.getElementById('tokenInput');
+const requestTokenBtn = document.getElementById('requestTokenBtn');
+const applyTokenBtn = document.getElementById('applyTokenBtn');
+const tokenStatus = document.getElementById('tokenStatus');
+
+let authTokens = {};
 let isGoalActiveLocal = false;
 
 goalToggleBtn.addEventListener('change', () => {
@@ -130,3 +137,74 @@ function setIndicator(system, state) {
 ipcRenderer.on('donation:status', (_e, {system, status}) => {
     setIndicator(system, status);
 });
+
+function showTokenStatus(text, ok = true) {
+    if (!tokenStatus) return;
+    tokenStatus.textContent = text;
+    tokenStatus.style.color = ok ? '#2ecc71' : '#e74c3c';
+}
+
+function fillTokenField() {
+    if (!serviceSelect || !tokenInput) return;
+    tokenInput.value = authTokens[serviceSelect.value] || '';
+    showTokenStatus('');
+}
+
+async function loadAuthTokens() {
+    try {
+        authTokens = await ipcRenderer.invoke('auth-tokens:get');
+        fillTokenField();
+    } catch (e) {
+        console.error('[auth] Не удалось загрузить токены:', e);
+        showTokenStatus('Не удалось загрузить токены', false);
+    }
+}
+
+if (serviceSelect) {
+    serviceSelect.addEventListener('change', fillTokenField);
+}
+
+if (requestTokenBtn) {
+    requestTokenBtn.addEventListener('click', () => {
+        ipcRenderer.send('auth-tokens:request', serviceSelect.value);
+        showTokenStatus('Открыта страница сервиса', true);
+    });
+}
+
+if (applyTokenBtn) {
+    applyTokenBtn.addEventListener('click', async () => {
+        const service = serviceSelect.value;
+        const token = tokenInput.value.trim();
+
+        if (!token) {
+            showTokenStatus('Введите токен', false);
+            return;
+        }
+
+        try {
+            const ok = await ipcRenderer.invoke('auth-tokens:save', {service, token});
+            if (ok) {
+                authTokens[service] = token;
+                showTokenStatus('Токен сохранён', true);
+            } else {
+                showTokenStatus('Ошибка записи файла', false);
+            }
+        } catch (e) {
+            console.error('[auth] Ошибка сохранения:', e);
+            showTokenStatus('Ошибка сохранения', false);
+        }
+    });
+}
+
+ipcRenderer.on('auth-token-received', (_e, data) => {
+    if (data && data.token) {
+        if (serviceSelect.value === data.service) {
+            tokenInput.value = data.token;
+            showTokenStatus('Токен получен и автоматически вставлен!', true);
+        } else {
+            showTokenStatus(`Токен для ${data.service} получен. Переключите сервис для вставки.`, true);
+        }
+    }
+});
+
+loadAuthTokens();

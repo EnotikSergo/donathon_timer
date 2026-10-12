@@ -59,6 +59,38 @@ function startOverlayServer(opts = {}) {
     const server = http.createServer((req, res) => {
         const u = new URL(req.url, 'http://localhost');
 
+        if (u.pathname === '/auth/save') {
+            const service = u.searchParams.get('service');
+            const token = u.searchParams.get('token');
+
+            res.writeHead(200, {
+                'Content-Type': 'application/json; charset=utf-8',
+                'Access-Control-Allow-Origin': '*'
+            });
+
+            if (service && token && opts.onAuth) {
+                opts.onAuth(service, token);
+                res.end(JSON.stringify({ ok: true }));
+            } else {
+                res.end(JSON.stringify({ ok: false }));
+            }
+            return;
+        }
+
+        if (u.pathname.startsWith('/auth/')) {
+            const filePath = path.join(__dirname, 'auth_success.html');
+            fs.readFile(filePath, (err, buf) => {
+                if (err) {
+                    res.writeHead(404);
+                    res.end('Not found');
+                    return;
+                }
+                res.writeHead(200, {'Content-Type': 'text/html; charset=utf-8'});
+                res.end(buf);
+            });
+            return;
+        }
+
         if (u.pathname === basePath + '/sse') {
             res.writeHead(200, {
                 'Content-Type': 'text/event-stream; charset=utf-8',
