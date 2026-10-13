@@ -35,11 +35,11 @@ ipcRenderer.on('goal:status', (_e, active) => {
     isGoalActiveLocal = active;
     if (active) {
         goalToggleBtn.innerText = 'Остановить сбор';
-        goalToggleBtn.style.background = '#dc3545';
+        goalToggleBtn.style.setProperty('background', '#dc3545');
         goalHoursInput.disabled = true;
     } else {
         goalToggleBtn.innerText = 'Активировать сбор';
-        goalToggleBtn.style.background = '#28a745';
+        goalToggleBtn.removeAttribute('style');
         goalHoursInput.disabled = false;
     }
 });

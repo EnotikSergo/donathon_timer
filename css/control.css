@@ -76,12 +76,25 @@ html, body {
     color: rgba(255, 255, 255, .8)
 }
 
-input[type="number"] {
+.control-panel input[type="number"] {
     background: rgba(255, 255, 255, .08);
     border: 1px solid rgba(255, 255, 255, .18);
     border-radius: 6px;
     color: #fff;
-    padding: 6px 8px
+    padding: 6px 8px;
+    transition: border-color 0.2s;
+    outline: none;
+}
+
+.control-pane select:focus,
+.control-panel input[type="number"]:focus {
+    border-color: #4facfe;
+}
+
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
 }
 
 .status-dot {
@@ -105,7 +118,7 @@ input[type="number"] {
     background: #000000;
 }
 
-#goalToggleBtn {
+.goalToggle-Btn {
     width: 100%;
     padding: 8px;
     background: #28a745;
@@ -115,6 +128,15 @@ input[type="number"] {
     cursor: pointer;
     font-weight: 600;
     -webkit-app-region: no-drag;
+    transition: background 0.2s, transform 0.1s;
+}
+
+.goalToggle-Btn:hover {
+    background: #218838;
+}
+
+.cp-body button:active {
+    transform: scale(0.98);
 }
 
 .main-container {

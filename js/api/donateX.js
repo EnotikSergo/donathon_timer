@@ -61,6 +61,7 @@
             if (!isConnected) {
                 isConnected = true;
                 sendStatus('connected');
+                console.log('[DX] Успешное подключение к DonateX');
             }
 
             if (Array.isArray(donations)) {

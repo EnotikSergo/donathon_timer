@@ -90,29 +90,41 @@ function hideStopwatch() {
 
 function updateRubPerHourUI() {
     if (rubPerHourText) {
-        rubPerHourText.innerText = `${rublesPerHour}р = 1 час`;
+        const priceFor3Min = Math.round(rublesPerHour / 20);
+        rubPerHourText.innerText = `${priceFor3Min}р = 3 минуты`;
         rubPerHourText.style.display = showRubPerHour ? "block" : "none";
     }
 }
 
 ipcRenderer.on('settings:update', (_e, s) => {
     if (!s) return;
+
+    let priceChanged = false;
     if (typeof s.secondsAddedPerCurrency !== 'undefined' && s.secondsAddedPerCurrency > 0) {
-        rublesPerHour = Math.round(3600 / s.secondsAddedPerCurrency);
+        const newRublesPerHour = Math.round(3600 / s.secondsAddedPerCurrency);
+        if (newRublesPerHour !== rublesPerHour) {
+            rublesPerHour = newRublesPerHour;
+            priceChanged = true;
+        }
     }
+
     if (typeof s.showRubPerHour !== 'undefined') {
         showRubPerHour = s.showRubPerHour;
     }
-
     if (typeof s.dynamicPriceIncreaseEnabled !== 'undefined') window.dynamicPriceIncreaseEnabled = s.dynamicPriceIncreaseEnabled;
     if (typeof s.maxTimerTier !== 'undefined') window.maxTimerTier = s.maxTimerTier;
-
     if (typeof s.sleepModeEnabled !== 'undefined') {
         const sleepMoon = document.getElementById('sleepMoon');
         if (sleepMoon) {
             sleepMoon.style.opacity = s.sleepModeEnabled ? "1" : "0";
         }
     }
+
+    if (priceChanged && isGoalActive) {
+        goalTargetAmount = goalTargetHours * rublesPerHour;
+        updateGoalUI();
+    }
+
     updateRubPerHourUI();
     checkPriceTiers();
 });

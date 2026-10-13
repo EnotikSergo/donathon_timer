@@ -127,6 +127,7 @@
             font-size: 1.95rem;
             font-weight: 700;
             text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+            white-space: nowrap;
         }
 
         #goalBarBg {
@@ -260,7 +261,8 @@
             currentRubPreHourState = state.rublesPerHour;
             const elRub = document.getElementById('rubPerHourText');
             if (elRub) {
-                elRub.textContent = `${state.rublesPerHour}р = 1 час`;
+                const priceFor3Min = Math.round(currentRubPreHourState / 20);
+                elRub.textContent = `${priceFor3Min}р = 3 минуты`;
                 elRub.style.display = state.showRubPerHour ? 'block' : 'none';
             }
         }
