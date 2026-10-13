@@ -46,6 +46,14 @@ if (fs1.existsSync(settingsFilePath)) {
 
 }
 
+(function recalcSecondsPerCurrency() {
+    const base = Number(settings.baseRubPerHour) > 0 ? Number(settings.baseRubPerHour) : 1000;
+    const step = Number(settings.dynamicPriceStep) > 0 ? Number(settings.dynamicPriceStep) : 1000;
+    const tier = Number(settings.maxTimerTier) > 0 ? Number(settings.maxTimerTier) : 0;
+    const effective = settings.dynamicPriceIncreaseEnabled ? (base + tier * step) : base;
+    settings.secondsAddedPerCurrency = 3600 / effective;
+})();
+
 function createWindows() {
     timerWin = new BrowserWindow({
         width: 800,
