@@ -157,7 +157,8 @@
         }
         lastDonationId = data.id;
 
-        const amount = Number(data.amount || data.amount_in_user_currency || 0);
+        const originalAmount = Number(data.amount || 0);
+        const amount = Number(data.amount_in_user_currency || originalAmount);
 
         if (amount > 0 && (typeof window.donationModeEnabled === 'undefined' || window.donationModeEnabled)) {
             if (typeof handleDonationWithGoalSystem === 'function') {
