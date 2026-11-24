@@ -2,26 +2,46 @@
     'use strict';
 
     const SYSTEM = 'DA';
+    const SERVICE = 'donationAlerts';
     const API_BASE = 'https://www.donationalerts.com/api/v1';
     const WS_URL = 'wss://centrifugo.donationalerts.com/connection/websocket';
 
     const API_TIMEOUT = 8000;
     const HANDSHAKE_TIMEOUT = 12000;
-    const HEALTH_INTERVAL = 5000;
-    const RECONNECT_MIN = 1000;
-    const RECONNECT_MAX = 5000;
+    const PING_INTERVAL = 25000;
+    const PING_TIMEOUT = 10000;
+    const MAX_MISSED_PINGS = 2;
+    const RECONNECT_BASE = 1000;
+    const RECONNECT_MAX = 30000;
+    const RECONNECT_JITTER = 500;
+    const MAX_PROCESSED_IDS = 1000;
+    const BASE_CURRENCY = 'RUB';
 
     let session = null;
     let reconnectTimer = null;
-    let healthTimer = null;
+    let reconnectAttempt = 0;
     let channelName = '';
     let offlineLogged = false;
+    let authFailed = false;
+    let currentStatus = null;
+    let lastSeenId = null;
+    let backfillUnavailableLogged = false;
     const processedIds = new Set();
 
     function sendStatus(status) {
+        if (status === currentStatus) return;
+        currentStatus = status;
         try {
-            ipcRenderer.send('donation:status', { system: SYSTEM, status });
-        } catch (_) {}
+            ipcRenderer.send('donation:status', {system: SYSTEM, status});
+        } catch (_) {
+        }
+    }
+
+    function reportAuthInvalid() {
+        try {
+            ipcRenderer.send('auth:invalid', SERVICE);
+        } catch (_) {
+        }
     }
 
     async function apiRequest(endpoint, method = 'GET', body = null) {
@@ -40,46 +60,59 @@
                 },
                 body: body ? JSON.stringify(body) : undefined
             });
-            if (!res.ok) throw new Error('HTTP ' + res.status);
+            if (!res.ok) {
+                const err = new Error('HTTP ' + res.status);
+                err.status = res.status;
+                throw err;
+            }
             return await res.json();
         } finally {
             clearTimeout(timer);
         }
     }
 
-    function stopHealth() {
-        if (healthTimer) {
-            clearInterval(healthTimer);
-            healthTimer = null;
-        }
+    function isAuthError(e) {
+        return e && (e.status === 401 || e.status === 403);
     }
 
     function destroySession(s) {
         if (!s) return;
         s.dead = true;
         clearTimeout(s.watchdog);
+        clearInterval(s.pingTimer);
+        clearTimeout(s.pingTimeout);
         if (s.ws) {
             s.ws.onopen = null;
             s.ws.onmessage = null;
             s.ws.onerror = null;
             s.ws.onclose = null;
-            try { s.ws.close(); } catch (_) {}
+            try {
+                s.ws.close();
+            } catch (_) {
+            }
             s.ws = null;
         }
     }
 
     function dropSession() {
-        stopHealth();
         if (session) {
             destroySession(session);
             session = null;
         }
     }
 
+    function clearReconnect() {
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+        }
+    }
+
     function scheduleReconnect() {
-        if (reconnectTimer) return;
-        const delay = RECONNECT_MIN +
-            Math.floor(Math.random() * (RECONNECT_MAX - RECONNECT_MIN));
+        if (reconnectTimer || authFailed) return;
+        const delay = Math.min(RECONNECT_MAX, RECONNECT_BASE * Math.pow(2, reconnectAttempt)) +
+            Math.floor(Math.random() * RECONNECT_JITTER);
+        reconnectAttempt++;
         console.warn(`[DA] Переподключение через ${delay} мс`);
         reconnectTimer = setTimeout(() => {
             reconnectTimer = null;
@@ -95,40 +128,107 @@
         scheduleReconnect();
     }
 
+    function failAuth(s, reason) {
+        if (session !== s || s.dead) return;
+        console.error('[DA] Токен не принят, переподключение остановлено:', reason);
+        authFailed = true;
+        clearReconnect();
+        sendStatus('error');
+        dropSession();
+        reportAuthInvalid();
+    }
+
     function armWatchdog(s, label) {
         clearTimeout(s.watchdog);
         s.watchdog = setTimeout(() => fail(s, 'таймаут этапа: ' + label), HANDSHAKE_TIMEOUT);
     }
 
-    function markConnected(s) {
+    function startPing(s, send) {
+        clearInterval(s.pingTimer);
+        s.missedPings = 0;
+        s.pingTimer = setInterval(() => {
+            if (session !== s || s.dead) return;
+            if (s.pingId !== null) return;
+
+            s.pingId = ++s.nextId;
+            if (!send({id: s.pingId, method: 7})) return;
+
+            s.pingTimeout = setTimeout(() => {
+                if (session !== s || s.dead) return;
+                s.pingId = null;
+                s.missedPings++;
+                console.warn(`[DA] Нет ответа на ping (${s.missedPings}/${MAX_MISSED_PINGS})`);
+                if (s.missedPings >= MAX_MISSED_PINGS) fail(s, 'сервер не отвечает на ping');
+            }, PING_TIMEOUT);
+        }, PING_INTERVAL);
+    }
+
+    function markConnected(s, send) {
         if (session !== s || s.dead || s.subscribed) return;
         s.subscribed = true;
         clearTimeout(s.watchdog);
+        reconnectAttempt = 0;
         console.log('[DA] Успешное подключение к DonationAlerts');
         sendStatus('connected');
-        startHealth(s);
+        startPing(s, send);
+        backfill(s);
     }
 
-    function startHealth(s) {
-        stopHealth();
-        healthTimer = setInterval(async () => {
-            if (session !== s || s.dead) return;
-
-            if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-                return fail(s, 'сеть недоступна');
+    async function backfill(s) {
+        let list;
+        try {
+            const res = await apiRequest('/alerts/donations');
+            list = Array.isArray(res && res.data) ? res.data : [];
+        } catch (e) {
+            if (isAuthError(e)) {
+                if (!backfillUnavailableLogged) {
+                    console.warn('[DA] Нет доступа к списку донатов: пропущенные донаты не досчитываются. Запросите токен заново.');
+                    backfillUnavailableLogged = true;
+                }
+            } else {
+                console.warn('[DA] Не удалось получить список донатов:', e.message);
             }
+            return;
+        }
+        if (session !== s || s.dead) return;
 
-            try {
-                await apiRequest('/user/oauth');
-            } catch (e) {
-                if (String(e.message).includes('429')) return;
-                return fail(s, 'health check: ' + e.message);
-            }
-        }, HEALTH_INTERVAL);
+        const ids = list.map(d => Number(d.id)).filter(Number.isFinite);
+        if (lastSeenId === null) {
+            lastSeenId = ids.length ? Math.max(...ids) : 0;
+            return;
+        }
+
+        const missed = list
+            .filter(d => Number(d.id) > lastSeenId && !processedIds.has(String(d.id)))
+            .sort((a, b) => Number(a.id) - Number(b.id));
+
+        if (missed.length) console.log(`[DA] Досчитываются пропущенные донаты: ${missed.length}`);
+        for (const d of missed) handleDonation(d);
+    }
+
+    function rememberId(id) {
+        processedIds.add(id);
+        if (processedIds.size > MAX_PROCESSED_IDS) {
+            processedIds.delete(processedIds.values().next().value);
+        }
+        const n = Number(id);
+        if (Number.isFinite(n) && (lastSeenId === null || n > lastSeenId)) lastSeenId = n;
+    }
+
+    function donationAmount(d) {
+        const converted = Number(d.amount_in_user_currency);
+        if (Number.isFinite(converted) && converted > 0) return converted;
+
+        const original = Number(d.amount);
+        const currency = String(d.currency || BASE_CURRENCY).toUpperCase();
+        if (currency === BASE_CURRENCY && Number.isFinite(original)) return original;
+
+        console.warn(`[DA] Донат ${d.id}: ${d.amount} ${currency} без суммы в основной валюте, не засчитан`);
+        return 0;
     }
 
     async function connect() {
-        if (session) return;
+        if (session || authFailed) return;
 
         if (typeof navigator !== 'undefined' && navigator.onLine === false) {
             if (!offlineLogged) {
@@ -154,10 +254,14 @@
             nextId: 0,
             connectId: null,
             subscribeId: null,
-            subscribed: false
+            subscribed: false,
+            pingTimer: null,
+            pingTimeout: null,
+            pingId: null,
+            missedPings: 0
         };
         session = s;
-        sendStatus('disconnected');
+        if (currentStatus !== 'error') sendStatus('disconnected');
 
         const send = (payload) => {
             if (session !== s || s.dead || !s.ws || s.ws.readyState !== WebSocket.OPEN) return false;
@@ -171,7 +275,13 @@
         };
 
         try {
-            const profile = await apiRequest('/user/oauth');
+            let profile;
+            try {
+                profile = await apiRequest('/user/oauth');
+            } catch (e) {
+                if (isAuthError(e)) return failAuth(s, e.message);
+                throw e;
+            }
             if (session !== s || s.dead) return;
 
             const userId = profile.data && profile.data.id;
@@ -179,7 +289,7 @@
             if (!userId || !socketToken) throw new Error('Нет id / socket_connection_token');
 
             channelName = `$alerts:donation_${userId}`;
-            
+
             const ws = new WebSocket(WS_URL);
             s.ws = ws;
             armWatchdog(s, 'ожидание ответа на connect');
@@ -187,10 +297,7 @@
             ws.onopen = () => {
                 if (session !== s || s.dead) return;
                 s.connectId = ++s.nextId;
-                send({ id: s.connectId, params: { token: socketToken } });
-            };
-
-            ws.onerror = () => {
+                send({id: s.connectId, params: {token: socketToken}});
             };
 
             ws.onclose = (e) => {
@@ -201,8 +308,19 @@
                 if (session !== s || s.dead) return;
 
                 let msg;
-                try { msg = JSON.parse(event.data); } catch (_) { return; }
+                try {
+                    msg = JSON.parse(event.data);
+                } catch (_) {
+                    return;
+                }
                 if (!msg || typeof msg !== 'object') return;
+
+                if (s.pingId !== null && msg.id === s.pingId) {
+                    s.pingId = null;
+                    s.missedPings = 0;
+                    clearTimeout(s.pingTimeout);
+                    return;
+                }
 
                 if (s.connectId !== null && msg.id === s.connectId) {
                     s.connectId = null;
@@ -225,27 +343,22 @@
                         send({
                             id: s.subscribeId,
                             method: 1,
-                            params: { channel: ch.channel || channelName, token: ch.token }
+                            params: {channel: ch.channel || channelName, token: ch.token}
                         });
                     } catch (e) {
+                        if (isAuthError(e)) return failAuth(s, 'подписка: ' + e.message);
                         fail(s, 'подписка: ' + e.message);
                     }
                     return;
                 }
 
-                if (s.subscribeId !== null) {
-                    const byId = msg.id === s.subscribeId;
-                    const byType = msg.result && msg.result.type === 1 &&
-                                   msg.result.channel === channelName;
-
-                    if (byId || byType) {
-                        s.subscribeId = null;
-                        if (msg.error) {
-                            return fail(s, 'ошибка подписки: ' + JSON.stringify(msg.error));
-                        }
-                        markConnected(s);
-                        return;
+                if (s.subscribeId !== null && msg.id === s.subscribeId) {
+                    s.subscribeId = null;
+                    if (msg.error) {
+                        return fail(s, 'ошибка подписки: ' + JSON.stringify(msg.error));
                     }
+                    markConnected(s, send);
+                    return;
                 }
 
                 if (msg.error) {
@@ -266,7 +379,7 @@
                 }
 
                 if (donation && donation.id) {
-                    markConnected(s);
+                    markConnected(s, send);
                     handleDonation(donation);
                 }
             };
@@ -279,27 +392,16 @@
     function handleDonation(d) {
         const id = String(d.id);
         if (processedIds.has(id)) return;
+        rememberId(id);
 
-        const converted = Number(d.amount_in_user_currency);
-        const original = Number(d.amount);
-        const amount = (Number.isFinite(converted) && converted > 0)
-            ? converted
-            : (Number.isFinite(original) ? original : 0);
-
-        processedIds.add(id);
-        if (processedIds.size > 500) {
-            processedIds.delete(processedIds.values().next().value);
-        }
-
-        if (!(amount > 0)) {
-            return;
-        }
+        const amount = donationAmount(d);
+        if (!(amount > 0)) return;
 
         if (typeof window.donationModeEnabled !== 'undefined' && !window.donationModeEnabled) {
             return;
         }
 
-        console.log(`[DA] ${original} ${d.currency || 'RUB'} → ${amount.toFixed(2)} RUB, от ${d.username || 'Anon'}`);
+        console.log(`[DA] ${d.amount} ${d.currency || BASE_CURRENCY} → ${amount.toFixed(2)} ${BASE_CURRENCY}, от ${d.username || 'Anon'}`);
 
         if (typeof handleDonationWithGoalSystem === 'function') {
             handleDonationWithGoalSystem(amount);
@@ -309,30 +411,31 @@
     }
 
     window.addEventListener('offline', () => {
-        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        clearReconnect();
         sendStatus('error');
         dropSession();
         scheduleReconnect();
     });
 
     window.addEventListener('online', () => {
-        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        clearReconnect();
+        reconnectAttempt = 0;
         dropSession();
         connect();
     });
 
     window.addEventListener('beforeunload', () => {
-        if (reconnectTimer) clearTimeout(reconnectTimer);
+        clearReconnect();
         dropSession();
     });
 
     window.donationServices = window.donationServices || {};
     window.donationServices.DA = {
         restart() {
-            if (reconnectTimer) {
-                clearTimeout(reconnectTimer);
-                reconnectTimer = null;
-            }
+            clearReconnect();
+            reconnectAttempt = 0;
+            authFailed = false;
+            backfillUnavailableLogged = false;
             dropSession();
             connect();
         }

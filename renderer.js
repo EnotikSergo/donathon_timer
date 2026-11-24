@@ -291,6 +291,9 @@ function registerIpcHandlers() {
     ipcMain.handle('auth:dx-save', (_e, token) => authManager.saveDxToken(token));
     ipcMain.handle('auth:logout', (_e, service) => authManager.logout(service));
     ipcMain.on('auth:dx-open-settings', () => authManager.openDxSettings());
+    ipcMain.on('auth:invalid', (_e, service) => {
+        if (service === 'donationAlerts' || service === 'donateX') authManager.verify(service);
+    });
 }
 
 function createWindows() {
