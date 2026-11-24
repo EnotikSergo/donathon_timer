@@ -1,181 +1,330 @@
 (function () {
-    const RECONNECTION_DELAY_MIN = 1000;
-    const RECONNECTION_DELAY_MAX = 5000;
+    'use strict';
+
     const SYSTEM = 'DA';
     const API_BASE = 'https://www.donationalerts.com/api/v1';
     const WS_URL = 'wss://centrifugo.donationalerts.com/connection/websocket';
 
-    let socket = null;
-    let reconnectTimeout = null;
-    let isConnecting = false;
-    let lastDonationId = null;
-    let msgIdCounter = 1;
-    let currentChannelName = '';
+    const API_TIMEOUT = 8000;
+    const HANDSHAKE_TIMEOUT = 12000;
+    const HEALTH_INTERVAL = 5000;
+    const RECONNECT_MIN = 1000;
+    const RECONNECT_MAX = 5000;
+
+    let session = null;
+    let reconnectTimer = null;
+    let healthTimer = null;
+    let channelName = '';
+    let offlineLogged = false;
+    const processedIds = new Set();
 
     function sendStatus(status) {
-        if (typeof ipcRenderer !== 'undefined') {
+        try {
             ipcRenderer.send('donation:status', { system: SYSTEM, status });
-        }
-    }
-
-    sendStatus('disconnected');
-
-    function getReconnectDelay() {
-        return Math.floor(Math.random() * (RECONNECTION_DELAY_MAX - RECONNECTION_DELAY_MIN) + RECONNECTION_DELAY_MIN);
+        } catch (_) {}
     }
 
     async function apiRequest(endpoint, method = 'GET', body = null) {
-        if (!donationAlertsToken) throw new Error('OAuth токен отсутствует');
+        if (!donationAlertsToken) throw new Error('OAuth-токен не задан');
 
-        const headers = {
-            'Authorization': `Bearer ${donationAlertsToken}`,
-            'Content-Type': 'application/json'
-        };
-
-        const options = { method, headers };
-        if (body) options.body = JSON.stringify(body);
-
-        const response = await fetch(`${API_BASE}${endpoint}`, options);
-
-        if (!response.ok) {
-            throw new Error(`API Error: ${response.status} ${response.statusText}`);
-        }
-
-        return response.json();
-    }
-
-    async function connectDonationAlerts() {
-        if (isConnecting) return;
-        isConnecting = true;
-
-        if (!donationAlertsToken) {
-            console.warn('[DA] OAuth токен отсутствует в config.js');
-            sendStatus('disconnected');
-            return;
-        }
-
-        sendStatus('disconnected');
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), API_TIMEOUT);
 
         try {
-            const userData = await apiRequest('/user/oauth');
-            const userId = userData.data.id;
-            const socketToken = userData.data.socket_connection_token;
-            currentChannelName = `$alerts:donation_${userId}`;
-
-            socket = new WebSocket(WS_URL);
-
-            socket.onopen = () => {
-                socket.send(JSON.stringify({
-                    id: msgIdCounter++,
-                    params: { token: socketToken }
-                }));
-            };
-
-            socket.onmessage = async (event) => {
-                let msg;
-                try {
-                    msg = JSON.parse(event.data);
-                } catch (e) {
-                    return;
-                }
-
-                if (msg.id === 1 && msg.result && msg.result.client) {
-                    const clientId = msg.result.client;
-                    try {
-                        const subData = await apiRequest('/centrifuge/subscribe', 'POST', {
-                            channels: [currentChannelName],
-                            client: clientId
-                        });
-
-                        const channelToken = subData.channels[0].token;
-
-                        socket.send(JSON.stringify({
-                            id: msgIdCounter++,
-                            method: 1,
-                            params: {
-                                channel: currentChannelName,
-                                token: channelToken
-                            }
-                        }));
-
-                        sendStatus('connected');
-                        isConnecting = false;
-
-                    } catch (subErr) {
-                        console.error('[DA] Ошибка подписки:', subErr);
-                        sendStatus('error');
-                        socket.close();
-                    }
-                    return;
-                }
-
-                if (msg.id === 2 && msg.result) {
-                    console.log('[DA] Успешное подключение к DonationAlerts');
-                    return;
-                }
-
-                let donationData = null;
-
-                if (msg.result && msg.result.channel === currentChannelName && msg.result.data && msg.result.data.data) {
-                    donationData = msg.result.data.data;
-                }
-                else if (msg.push && msg.push.channel === currentChannelName && msg.push.data) {
-                    donationData = msg.push.data;
-                }
-
-                if (donationData) {
-                    handleDonation(donationData);
-                }
-            };
-
-            socket.onerror = (err) => {
-                console.warn('[DA] WebSocket ошибка', err);
-            };
-
-            socket.onclose = (e) => {
-                console.warn('[DA] WebSocket закрыт', e.code, e.reason);
-                sendStatus('error');
-                isConnecting = false;
-                scheduleReconnect();
-            };
-
-        } catch (err) {
-            console.error('[DA] Критическая ошибка инициализации:', err);
-            sendStatus('error');
-            isConnecting = false;
-            scheduleReconnect();
+            const res = await fetch(API_BASE + endpoint, {
+                method,
+                signal: controller.signal,
+                headers: {
+                    'Authorization': 'Bearer ' + donationAlertsToken,
+                    'Content-Type': 'application/json'
+                },
+                body: body ? JSON.stringify(body) : undefined
+            });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return await res.json();
+        } finally {
+            clearTimeout(timer);
         }
     }
 
-    function handleDonation(data) {
-        if (!data || !data.id) {
-            return;
+    function stopHealth() {
+        if (healthTimer) {
+            clearInterval(healthTimer);
+            healthTimer = null;
         }
+    }
 
-        if (data.id === lastDonationId) {
-            return;
+    function destroySession(s) {
+        if (!s) return;
+        s.dead = true;
+        clearTimeout(s.watchdog);
+        if (s.ws) {
+            s.ws.onopen = null;
+            s.ws.onmessage = null;
+            s.ws.onerror = null;
+            s.ws.onclose = null;
+            try { s.ws.close(); } catch (_) {}
+            s.ws = null;
         }
-        lastDonationId = data.id;
+    }
 
-        const originalAmount = Number(data.amount || 0);
-        const amount = Number(data.amount_in_user_currency || originalAmount);
-
-        if (amount > 0 && (typeof window.donationModeEnabled === 'undefined' || window.donationModeEnabled)) {
-            if (typeof handleDonationWithGoalSystem === 'function') {
-                handleDonationWithGoalSystem(amount);
-            }
+    function dropSession() {
+        stopHealth();
+        if (session) {
+            destroySession(session);
+            session = null;
         }
     }
 
     function scheduleReconnect() {
-        if (reconnectTimeout) return;
-        const delay = getReconnectDelay();
-        console.log(`[DA] Переподключение через ${delay} мс`);
-        reconnectTimeout = setTimeout(() => {
-            reconnectTimeout = null;
-            connectDonationAlerts();
+        if (reconnectTimer) return;
+        const delay = RECONNECT_MIN +
+            Math.floor(Math.random() * (RECONNECT_MAX - RECONNECT_MIN));
+        console.warn(`[DA] Переподключение через ${delay} мс`);
+        reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            connect();
         }, delay);
     }
 
-    connectDonationAlerts();
+    function fail(s, reason) {
+        if (session !== s || s.dead) return;
+        console.warn('[DA] Сессия прервана:', reason);
+        sendStatus('error');
+        dropSession();
+        scheduleReconnect();
+    }
+
+    function armWatchdog(s, label) {
+        clearTimeout(s.watchdog);
+        s.watchdog = setTimeout(() => fail(s, 'таймаут этапа: ' + label), HANDSHAKE_TIMEOUT);
+    }
+
+    function markConnected(s) {
+        if (session !== s || s.dead || s.subscribed) return;
+        s.subscribed = true;
+        clearTimeout(s.watchdog);
+        console.log('[DA] Успешное подключение к DonationAlerts');
+        sendStatus('connected');
+        startHealth(s);
+    }
+
+    function startHealth(s) {
+        stopHealth();
+        healthTimer = setInterval(async () => {
+            if (session !== s || s.dead) return;
+
+            if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+                return fail(s, 'сеть недоступна');
+            }
+
+            try {
+                await apiRequest('/user/oauth');
+            } catch (e) {
+                if (String(e.message).includes('429')) return;
+                return fail(s, 'health check: ' + e.message);
+            }
+        }, HEALTH_INTERVAL);
+    }
+
+    async function connect() {
+        if (session) return;
+
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            if (!offlineLogged) {
+                console.warn('[DA] Сети нет, ждём восстановления');
+                offlineLogged = true;
+            }
+            sendStatus('error');
+            scheduleReconnect();
+            return;
+        }
+        offlineLogged = false;
+
+        if (!donationAlertsToken) {
+            console.warn('[DA] OAuth-токен не задан');
+            sendStatus('disconnected');
+            return;
+        }
+
+        const s = {
+            ws: null,
+            dead: false,
+            watchdog: null,
+            nextId: 0,
+            connectId: null,
+            subscribeId: null,
+            subscribed: false
+        };
+        session = s;
+        sendStatus('disconnected');
+
+        const send = (payload) => {
+            if (session !== s || s.dead || !s.ws || s.ws.readyState !== WebSocket.OPEN) return false;
+            try {
+                s.ws.send(JSON.stringify(payload));
+                return true;
+            } catch (e) {
+                fail(s, 'send: ' + e.message);
+                return false;
+            }
+        };
+
+        try {
+            const profile = await apiRequest('/user/oauth');
+            if (session !== s || s.dead) return;
+
+            const userId = profile.data && profile.data.id;
+            const socketToken = profile.data && profile.data.socket_connection_token;
+            if (!userId || !socketToken) throw new Error('Нет id / socket_connection_token');
+
+            channelName = `$alerts:donation_${userId}`;
+            
+            const ws = new WebSocket(WS_URL);
+            s.ws = ws;
+            armWatchdog(s, 'ожидание ответа на connect');
+
+            ws.onopen = () => {
+                if (session !== s || s.dead) return;
+                s.connectId = ++s.nextId;
+                send({ id: s.connectId, params: { token: socketToken } });
+            };
+
+            ws.onerror = () => {
+            };
+
+            ws.onclose = (e) => {
+                fail(s, `WebSocket closed: ${e.code} ${e.reason || ''}`);
+            };
+
+            ws.onmessage = async (event) => {
+                if (session !== s || s.dead) return;
+
+                let msg;
+                try { msg = JSON.parse(event.data); } catch (_) { return; }
+                if (!msg || typeof msg !== 'object') return;
+
+                if (s.connectId !== null && msg.id === s.connectId) {
+                    s.connectId = null;
+                    const clientId = msg.result && msg.result.client;
+                    if (!clientId) return fail(s, 'в ответе connect нет client');
+
+                    armWatchdog(s, 'подписка на канал');
+
+                    try {
+                        const sub = await apiRequest('/centrifuge/subscribe', 'POST', {
+                            channels: [channelName],
+                            client: clientId
+                        });
+                        if (session !== s || s.dead) return;
+
+                        const ch = sub.channels && sub.channels[0];
+                        if (!ch || !ch.token) throw new Error('Нет токена канала');
+
+                        s.subscribeId = ++s.nextId;
+                        send({
+                            id: s.subscribeId,
+                            method: 1,
+                            params: { channel: ch.channel || channelName, token: ch.token }
+                        });
+                    } catch (e) {
+                        fail(s, 'подписка: ' + e.message);
+                    }
+                    return;
+                }
+
+                if (s.subscribeId !== null) {
+                    const byId = msg.id === s.subscribeId;
+                    const byType = msg.result && msg.result.type === 1 &&
+                                   msg.result.channel === channelName;
+
+                    if (byId || byType) {
+                        s.subscribeId = null;
+                        if (msg.error) {
+                            return fail(s, 'ошибка подписки: ' + JSON.stringify(msg.error));
+                        }
+                        markConnected(s);
+                        return;
+                    }
+                }
+
+                if (msg.error) {
+                    console.warn('[DA] Ошибка сервера:', msg.error);
+                    return;
+                }
+
+                const channel = (msg.result && msg.result.channel) || (msg.push && msg.push.channel);
+                if (channel && channel !== channelName) return;
+
+                const payload = msg.result ? msg.result.data : (msg.push && msg.push.data);
+                let donation = null;
+
+                if (payload && payload.data && typeof payload.data === 'object') {
+                    donation = payload.data;
+                } else if (payload && payload.id && payload.amount !== undefined) {
+                    donation = payload;
+                }
+
+                if (donation && donation.id) {
+                    markConnected(s);
+                    handleDonation(donation);
+                }
+            };
+
+        } catch (e) {
+            fail(s, e.message);
+        }
+    }
+
+    function handleDonation(d) {
+        const id = String(d.id);
+        if (processedIds.has(id)) return;
+
+        const converted = Number(d.amount_in_user_currency);
+        const original = Number(d.amount);
+        const amount = (Number.isFinite(converted) && converted > 0)
+            ? converted
+            : (Number.isFinite(original) ? original : 0);
+
+        processedIds.add(id);
+        if (processedIds.size > 500) {
+            processedIds.delete(processedIds.values().next().value);
+        }
+
+        if (!(amount > 0)) {
+            return;
+        }
+
+        if (typeof window.donationModeEnabled !== 'undefined' && !window.donationModeEnabled) {
+            return;
+        }
+
+        console.log(`[DA] ${original} ${d.currency || 'RUB'} → ${amount.toFixed(2)} RUB, от ${d.username || 'Anon'}`);
+
+        if (typeof handleDonationWithGoalSystem === 'function') {
+            handleDonationWithGoalSystem(amount);
+        } else {
+            console.error('[DA] handleDonationWithGoalSystem не найдена');
+        }
+    }
+
+    window.addEventListener('offline', () => {
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        sendStatus('error');
+        dropSession();
+        scheduleReconnect();
+    });
+
+    window.addEventListener('online', () => {
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        dropSession();
+        connect();
+    });
+
+    window.addEventListener('beforeunload', () => {
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        dropSession();
+    });
+
+    connect();
 })();
