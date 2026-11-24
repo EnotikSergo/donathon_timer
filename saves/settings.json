@@ -2,5 +2,6 @@
   "dynamicPriceIncreaseEnabled": false,
   "maxTimerTier": 0,
   "baseRubPerHour": 1000,
-  "dynamicPriceStep": 500
+  "dynamicPriceStep": 500,
+  "lanAccessEnabled": false
 }

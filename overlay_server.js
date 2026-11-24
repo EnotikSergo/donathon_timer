@@ -3,6 +3,10 @@ const fs = require('fs');
 const path = require('path');
 const {URL} = require('url');
 
+const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+const AUTH_SERVICES = new Set(['donationAlerts']);
+
 function mime(file) {
     const ext = path.extname(file).toLowerCase();
     return ({
@@ -29,14 +33,41 @@ function resolveOverlayDir() {
     return path.join(__dirname, 'overlay');
 }
 
+function isLocalRequest(req) {
+    if (!LOOPBACK_ADDRESSES.has(req.socket.remoteAddress)) return false;
+    if (req.headers['x-forwarded-for'] || req.headers['forwarded'] || req.headers['x-real-ip']) return false;
+
+    const hostHeader = String(req.headers.host || '');
+    const hostname = hostHeader.startsWith('[')
+        ? hostHeader.slice(0, hostHeader.indexOf(']') + 1)
+        : hostHeader.split(':')[0];
+    return LOOPBACK_HOSTNAMES.has(hostname.toLowerCase());
+}
+
+function isCrossSiteRequest(req) {
+    const site = req.headers['sec-fetch-site'];
+    if (site && site !== 'same-origin' && site !== 'none') return true;
+
+    const origin = req.headers.origin;
+    if (origin && origin !== 'null') {
+        try {
+            return new URL(origin).host !== req.headers.host;
+        } catch {
+            return true;
+        }
+    }
+    return false;
+}
+
 function startOverlayServer(opts = {}) {
-    const host = opts.host || '0.0.0.0';
+    const host = opts.host || '127.0.0.1';
     const port = Number(opts.port || 41701);
     const basePath = (opts.basePath || '/overlay').replace(/\/+$/, '');
-    const overlayDir = opts.overlayDir || resolveOverlayDir();
+    const overlayDir = path.resolve(opts.overlayDir || resolveOverlayDir());
 
-    let latestState = {remaining: '00:00:00', subtitle: '', color: '#ffffff'};
+    let latestState = {remaining: '00:00:00'};
     const sseClients = new Set();
+    const sockets = new Set();
 
     function sendSSE(res, payloadObj) {
         try {
@@ -51,46 +82,50 @@ function startOverlayServer(opts = {}) {
     }
 
     function safeJoin(root, rel) {
-        const p = path.normalize(path.join(root, rel));
-        if (!p.startsWith(root)) throw new Error('Forbidden path');
+        const p = path.resolve(root, rel);
+        if (p !== root && !p.startsWith(root + path.sep)) throw new Error('Forbidden path');
         return p;
     }
 
-    const server = http.createServer((req, res) => {
-        const u = new URL(req.url, 'http://localhost');
+    function notFound(res) {
+        res.writeHead(404, {'Content-Type': 'text/plain; charset=utf-8'});
+        res.end('Not found');
+    }
 
+    function handleAuth(req, res, u) {
         if (u.pathname === '/auth/save') {
+            if (isCrossSiteRequest(req)) {
+                res.writeHead(403, {'Content-Type': 'text/plain; charset=utf-8'});
+                res.end('Forbidden');
+                return;
+            }
+
             const service = u.searchParams.get('service');
             const token = u.searchParams.get('token');
 
-            res.writeHead(200, {
-                'Content-Type': 'application/json; charset=utf-8',
-                'Access-Control-Allow-Origin': '*'
-            });
+            res.writeHead(200, {'Content-Type': 'application/json; charset=utf-8'});
 
-            if (service && token && opts.onAuth) {
+            if (service && AUTH_SERVICES.has(service) && token && opts.onAuth) {
                 opts.onAuth(service, token);
-                res.end(JSON.stringify({ ok: true }));
+                res.end(JSON.stringify({ok: true}));
             } else {
-                res.end(JSON.stringify({ ok: false }));
+                res.end(JSON.stringify({ok: false}));
             }
             return;
         }
 
-        if (u.pathname.startsWith('/auth/')) {
-            const filePath = path.join(__dirname, 'auth_success.html');
-            fs.readFile(filePath, (err, buf) => {
-                if (err) {
-                    res.writeHead(404);
-                    res.end('Not found');
-                    return;
-                }
-                res.writeHead(200, {'Content-Type': 'text/html; charset=utf-8'});
-                res.end(buf);
-            });
-            return;
-        }
+        const filePath = path.join(__dirname, 'auth_success.html');
+        fs.readFile(filePath, (err, buf) => {
+            if (err) {
+                notFound(res);
+                return;
+            }
+            res.writeHead(200, {'Content-Type': 'text/html; charset=utf-8'});
+            res.end(buf);
+        });
+    }
 
+    function handleOverlay(req, res, u) {
         if (u.pathname === basePath + '/sse') {
             res.writeHead(200, {
                 'Content-Type': 'text/event-stream; charset=utf-8',
@@ -120,29 +155,58 @@ function startOverlayServer(opts = {}) {
             return;
         }
 
-        if (u.pathname.startsWith(basePath)) {
-            let filePath = u.pathname.slice(basePath.length).replace(/^\/+/, '');
-            if (!filePath) filePath = 'index.html';
-            try {
-                const full = safeJoin(overlayDir, filePath);
-                fs.readFile(full, (err, buf) => {
-                    if (err) {
-                        res.writeHead(404);
-                        res.end('Not found');
-                        return;
-                    }
-                    res.writeHead(200, {'Content-Type': mime(full)});
-                    res.end(buf);
-                });
-            } catch {
-                res.writeHead(403);
-                res.end('Forbidden');
+        let filePath = u.pathname.slice(basePath.length).replace(/^\/+/, '');
+        if (!filePath) filePath = 'index.html';
+        let full;
+        try {
+            full = safeJoin(overlayDir, decodeURIComponent(filePath));
+        } catch {
+            res.writeHead(403, {'Content-Type': 'text/plain; charset=utf-8'});
+            res.end('Forbidden');
+            return;
+        }
+        fs.readFile(full, (err, buf) => {
+            if (err) {
+                notFound(res);
+                return;
             }
+            res.writeHead(200, {'Content-Type': mime(full)});
+            res.end(buf);
+        });
+    }
+
+    const server = http.createServer((req, res) => {
+        let u;
+        try {
+            u = new URL(req.url, 'http://localhost');
+        } catch {
+            notFound(res);
             return;
         }
 
-        res.writeHead(404, {'Content-Type': 'text/plain; charset=utf-8'});
-        res.end('Not found');
+        const isOverlayPath = u.pathname === basePath || u.pathname.startsWith(basePath + '/');
+        const isReadMethod = req.method === 'GET' || req.method === 'HEAD';
+
+        if (isOverlayPath && isReadMethod) {
+            handleOverlay(req, res, u);
+            return;
+        }
+
+        if (u.pathname.startsWith('/auth/') && isReadMethod && isLocalRequest(req)) {
+            handleAuth(req, res, u);
+            return;
+        }
+
+        notFound(res);
+    });
+
+    server.on('connection', (socket) => {
+        sockets.add(socket);
+        socket.on('close', () => sockets.delete(socket));
+    });
+
+    server.on('error', (err) => {
+        console.error(`[overlay] Ошибка сервера на ${host}:${port}:`, err.message);
     });
 
     server.listen(port, host, () => {
@@ -167,7 +231,22 @@ function startOverlayServer(opts = {}) {
         }
     }
 
-    return {server, push, pushEvent, getState: () => latestState};
+    function close() {
+        return new Promise((resolve) => {
+            for (const res of Array.from(sseClients)) {
+                try {
+                    res.end();
+                } catch {
+                }
+            }
+            sseClients.clear();
+            server.close(() => resolve());
+            for (const socket of sockets) socket.destroy();
+            sockets.clear();
+        });
+    }
+
+    return {push, pushEvent, close};
 }
 
 module.exports = {startOverlayServer};

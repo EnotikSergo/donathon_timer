@@ -4,7 +4,6 @@
   "description": "donathon-countdown",
   "main": "renderer.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make"
@@ -28,8 +27,7 @@
     "electron": "^18.0.4"
   },
   "dependencies": {
-    "electron-squirrel-startup": "^1.0.0",
-    "socket.io-client": "^4.8.3"
+    "electron-squirrel-startup": "^1.0.0"
   },
   "config": {
     "forge": {
@@ -38,7 +36,7 @@
         {
           "name": "@electron-forge/maker-squirrel",
           "config": {
-            "name": "twitch_subathon_countdown"
+            "name": "donathon_timer"
           }
         },
         {

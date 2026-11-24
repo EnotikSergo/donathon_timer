@@ -31,10 +31,6 @@ html, body {
     width: 260px;
 }
 
-.control-panel.hidden {
-    display: none
-}
-
 .control-panel .cp-header {
     display: flex;
     align-items: center;
@@ -86,7 +82,6 @@ html, body {
     outline: none;
 }
 
-.control-pane select:focus,
 .control-panel input[type="number"]:focus {
     border-color: #4facfe;
 }

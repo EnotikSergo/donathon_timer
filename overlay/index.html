@@ -255,7 +255,6 @@
             currentRemainingTimeState = state.remaining;
             elT.textContent = state.remaining;
         }
-        if (state.color != null) document.documentElement.style.setProperty('--fg', state.color);
 
         if (state.showRubPerHour !== undefined && state.rublesPerHour !== undefined && state.rublesPerHour !== currentRubPreHourState) {
             currentRubPreHourState = state.rublesPerHour;

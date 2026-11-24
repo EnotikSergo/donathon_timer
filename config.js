@@ -1,21 +1,12 @@
-// Login Data
 var donationAlertsToken = "";
-var trulaObsToken = "";
 var donateXToken = "";
 
 try {
-    const fs = require('fs');
-    const path = require('path');
-    const tokensPath = path.join(__dirname, 'saves', 'auth_tokens.json');
-
-    if (fs.existsSync(tokensPath)) {
-        const t = JSON.parse(fs.readFileSync(tokensPath, 'utf8'));
-        donationAlertsToken = t.donationAlerts || "";
-        trulaObsToken       = t.trula || "";
-        donateXToken        = t.donateX || "";
-    }
+    const t = require('electron').ipcRenderer.sendSync('auth-tokens:get-sync') || {};
+    donationAlertsToken = t.donationAlerts || "";
+    donateXToken = t.donateX || "";
 } catch (e) {
-    console.error('[config] Не удалось прочитать токены:', e);
+    console.error('[config] Не удалось получить токены:', e);
 }
 
 // Initial Counter Config
@@ -41,26 +32,5 @@ var rublesPerHour = 1000;
 // Donation is converted automatically to the MAIN donation alerts account currency
 var secondsAddedPerCurrency = 60 * 60 / rublesPerHour;
 
-
-// Runtime settings
-try {
-    const ls = window.localStorage;
-    if (ls.getItem('secondsAddedPerCurrency') !== null) {
-        const v = parseFloat(ls.getItem('secondsAddedPerCurrency'));
-        if (!Number.isNaN(v)) secondsAddedPerCurrency = v;
-    }
-
-    if (ls.getItem('donationModeEnabled') !== null) {
-        window.donationModeEnabled = (ls.getItem('donationModeEnabled') === 'true');
-    } else {
-        window.donationModeEnabled = false;
-    }
-    if (ls.getItem('sleepModeEnabled') !== null) {
-        window.sleepModeEnabled = (ls.getItem('sleepModeEnabled') === 'true');
-    } else {
-        window.sleepModeEnabled = false;
-    }
-} catch (e) {
-    window.donationModeEnabled = (typeof window.donationModeEnabled === 'boolean') ? window.donationModeEnabled : false;
-    window.sleepModeEnabled = (typeof window.sleepModeEnabled === 'boolean') ? window.sleepModeEnabled : false;
-}
+window.donationModeEnabled = false;
+window.sleepModeEnabled = false;

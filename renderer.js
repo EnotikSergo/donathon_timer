@@ -17,7 +17,10 @@ function readAuthTokens() {
     return {};
 }
 
-let overlay;
+const OVERLAY_PORT = Number(process.env.OVERLAY_PORT || 41701);
+
+let overlay = null;
+let overlayHost = null;
 let timerWin = null;
 let controlWin = null;
 
@@ -29,7 +32,8 @@ let settings = {
     dynamicPriceIncreaseEnabled: true,
     maxTimerTier: 0,
     baseRubPerHour: 1000,
-    dynamicPriceStep: 1000
+    dynamicPriceStep: 1000,
+    lanAccessEnabled: false
 };
 
 if (fs1.existsSync(settingsFilePath)) {
@@ -93,7 +97,8 @@ function createWindows() {
                 dynamicPriceIncreaseEnabled: settings.dynamicPriceIncreaseEnabled,
                 maxTimerTier: settings.maxTimerTier,
                 baseRubPerHour: settings.baseRubPerHour,
-                dynamicPriceStep: settings.dynamicPriceStep
+                dynamicPriceStep: settings.dynamicPriceStep,
+                lanAccessEnabled: !!settings.lanAccessEnabled
             };
             fs1.writeFileSync(settingsFilePath, JSON.stringify(dataToSave, null, 2), 'utf8');
         } catch (e) {
@@ -102,6 +107,8 @@ function createWindows() {
 
         if (timerWin && !timerWin.isDestroyed()) timerWin.webContents.send('settings:update', settings);
         if (controlWin && !controlWin.isDestroyed()) controlWin.webContents.send('settings:update', settings);
+
+        if (partial && typeof partial.lanAccessEnabled !== 'undefined') applyOverlayHost();
     });
 
     ipcMain.on('control:toggle', () => {
@@ -125,6 +132,9 @@ function createWindows() {
     });
 
     ipcMain.handle('auth-tokens:get', () => readAuthTokens());
+    ipcMain.on('auth-tokens:get-sync', (e) => {
+        e.returnValue = readAuthTokens();
+    });
 
     ipcMain.handle('auth-tokens:save', (_e, payload) => {
         if (!payload || !payload.service) return false;
@@ -150,40 +160,58 @@ function createWindows() {
         if (service === 'donationAlerts') {
             const authUrl = `https://www.donationalerts.com/oauth/authorize?client_id=21868&redirect_uri=http://localhost:41701/auth/da&response_type=token&scope=oauth-user-show%20oauth-donation-subscribe`;
             shell.openExternal(authUrl);
-        } else {
-            let url = "";
-            if (service === 'donateX') url = 'https://donatex.gg/streamer/settings';
-            else if (service === 'trula') url = 'https://trula.io/lk/widgets/control-panel';
-            if (url) shell.openExternal(url);
+        } else if (service === 'donateX') {
+            shell.openExternal('https://donatex.gg/streamer/settings');
         }
     });
 }
 
-app.whenReady().then(() => {
-    overlay = startOverlayServer({
-        port: process.env.OVERLAY_PORT || 41701,
-        host: '0.0.0.0',
-        basePath: '/overlay',
-        onAuth: (service, token) => {
-            console.log(`[Auth] Получен токен для сервиса: ${service}`);
+function handleAuthFromOverlay(service, token) {
+    console.log(`[Auth] Получен токен для сервиса: ${service}`);
 
-            const all = readAuthTokens();
-            all[service] = token;
-            try {
-                fs1.writeFileSync(tokensFilePath, JSON.stringify(all, null, 2), 'utf8');
-            } catch (e) {
-                console.error('[Auth] Ошибка сохранения токена:', e);
-            }
+    const all = readAuthTokens();
+    all[service] = token;
+    try {
+        fs1.writeFileSync(tokensFilePath, JSON.stringify(all, null, 2), 'utf8');
+    } catch (e) {
+        console.error('[Auth] Ошибка сохранения токена:', e);
+    }
 
-            if (controlWin && !controlWin.isDestroyed()) {
-                controlWin.webContents.send('auth-token-received', { service, token });
-            }
+    if (controlWin && !controlWin.isDestroyed()) {
+        controlWin.webContents.send('auth-token-received', { service, token });
+    }
 
-            if (timerWin && !timerWin.isDestroyed()) {
-                timerWin.webContents.send('auth-tokens:updated');
-            }
+    if (timerWin && !timerWin.isDestroyed()) {
+        timerWin.webContents.send('auth-tokens:updated');
+    }
+}
+
+let overlayRestart = Promise.resolve();
+
+function applyOverlayHost() {
+    const host = settings.lanAccessEnabled ? '0.0.0.0' : '127.0.0.1';
+    if (overlay && overlayHost === host) return overlayRestart;
+
+    overlayRestart = overlayRestart.then(async () => {
+        if (overlay && overlayHost === host) return;
+        if (overlay) {
+            const old = overlay;
+            overlay = null;
+            await old.close();
         }
-    });
+        overlayHost = host;
+        overlay = startOverlayServer({
+            port: OVERLAY_PORT,
+            host,
+            basePath: '/overlay',
+            onAuth: handleAuthFromOverlay
+        });
+    }).catch((e) => console.error('[overlay] Не удалось перезапустить сервер:', e));
+    return overlayRestart;
+}
+
+app.whenReady().then(() => {
+    applyOverlayHost();
     createWindows();
 });
 
@@ -200,7 +228,10 @@ ipcMain.on('overlay:state', (_, state) => {
     }
 });
 ipcMain.on('overlay:event', (_, event) => {
-    overlay.pushEvent(event);
+    try {
+        overlay && overlay.pushEvent(event);
+    } catch {
+    }
 });
 
 ipcMain.on('goal:activate', (event, data) => {

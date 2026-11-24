@@ -6,6 +6,7 @@ const donationToggle = document.getElementById('donationModeToggle');
 const showRubPerHourToggle = document.getElementById('showRubPerHourToggle');
 const rubPerHourInput = document.getElementById('rubPerHourInput');
 const dynamicPriceToggle = document.getElementById('dynamicPriceToggle');
+const lanAccessToggle = document.getElementById('lanAccessToggle');
 const goalHoursInput = document.getElementById('goalHoursInput');
 const goalToggleBtn = document.getElementById('goalToggleBtn');
 const dynamicPriceStepInput = document.getElementById('dynamicPriceStepInput');
@@ -17,9 +18,6 @@ const tokenStatus = document.getElementById('tokenStatus');
 
 let authTokens = {};
 let isGoalActiveLocal = false;
-
-goalToggleBtn.addEventListener('change', () => {
-});
 
 goalToggleBtn.addEventListener('click', () => {
     if (!isGoalActiveLocal) {
@@ -46,8 +44,7 @@ ipcRenderer.on('goal:status', (_e, active) => {
 
 const indicators = {
     DA: document.getElementById('status-da'),
-    DX: document.getElementById('status-dx'),
-    TR: document.getElementById('status-tr')
+    DX: document.getElementById('status-dx')
 };
 
 toggleBtn.addEventListener('click', () => {
@@ -78,6 +75,9 @@ function apply(s) {
 
     if (typeof s.dynamicPriceIncreaseEnabled !== 'undefined')
         dynamicPriceToggle.checked = !!s.dynamicPriceIncreaseEnabled;
+
+    if (typeof s.lanAccessEnabled !== 'undefined')
+        lanAccessToggle.checked = !!s.lanAccessEnabled;
 }
 
 ipcRenderer.invoke('settings:get').then(apply);
@@ -114,6 +114,10 @@ dynamicPriceStepInput.addEventListener('input', () => {
 
 dynamicPriceToggle.addEventListener('change', () =>
     ipcRenderer.send('settings:set', {dynamicPriceIncreaseEnabled: dynamicPriceToggle.checked})
+);
+
+lanAccessToggle.addEventListener('change', () =>
+    ipcRenderer.send('settings:set', {lanAccessEnabled: lanAccessToggle.checked})
 );
 
 function setIndicator(system, state) {

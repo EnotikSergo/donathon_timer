@@ -1,3 +1,8 @@
+const pad2 = (n) => {
+    const s = n.toString();
+    return (s.length < 2) ? `0${s}` : s;
+};
+
 timeFunc = {
     addHours(time, h) {
         time.setTime(time.getTime() + (h * 60 * 60 * 1000));
@@ -14,41 +19,15 @@ timeFunc = {
         return time;
     },
 
-    addMilliseconds(time, s) {
-        time.setTime(time.getTime() + s);
-        return time;
-    },
-
     getHours(time) {
-        let hours;
-        if (typeof time !== 'number') {
-            hours = time.getHours().toString();
-        } else {
-            hours = Math.floor(time / (1000 * 60 * 60)).toString();
-        }
-        hours = (hours.length < 2) ? `0${hours}` : hours;
-        return hours;
+        return pad2(Math.floor(time / (1000 * 60 * 60)));
     },
 
     getMinutes(time) {
-        let minutes;
-        if (typeof time !== 'number') {
-            minutes = time.getMinutes().toString();
-        } else {
-            minutes = Math.floor((time % (1000 * 60 * 60)) / (1000 * 60)).toString();
-        }
-        minutes = (minutes.length < 2) ? `0${minutes}` : minutes;
-        return minutes;
+        return pad2(Math.floor((time % (1000 * 60 * 60)) / (1000 * 60)));
     },
 
     getSeconds(time) {
-        let seconds;
-        if (typeof time !== 'number') {
-            seconds = time.getSeconds().toString();
-        } else {
-            seconds = Math.floor((time % (1000 * 60)) / 1000).toString();
-        }
-        seconds = (seconds.length < 2) ? `0${seconds}` : seconds;
-        return seconds;
+        return pad2(Math.floor((time % (1000 * 60)) / 1000));
     }
 };

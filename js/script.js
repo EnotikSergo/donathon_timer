@@ -1,8 +1,6 @@
-const timeText = document.getElementById("timeText");
 const {ipcRenderer} = require('electron');
 const fs = require('fs');
 const path = require('path');
-const path1 = require("path");
 
 const timerFilePath = path.join(__dirname, 'saves/timer_value.txt');
 const stopwatchFilePath = path.join(__dirname, 'saves/stopwatch_save.txt');
@@ -28,7 +26,6 @@ let showStopwatchState = false;
 let visibilityTimeout;
 let hideTimeout;
 
-const TEST_MODE = false;
 const SHOW_DURATION = 15000;
 const THREE_DAYS_IN_SECONDS = 3 * 24 * 3600; // 259200 секунд
 
@@ -48,7 +45,7 @@ const timeTextEl = document.getElementById("timeText");
 const pauseIconElement = document.getElementById("pauseIcon");
 
 
-function formatStopwatch(totalSeconds, isEnded) {
+function formatStopwatch(totalSeconds) {
     const d = Math.floor(totalSeconds / (3600 * 24));
     const h = Math.floor((totalSeconds % (3600 * 24)) / 3600);
     const m = Math.floor((totalSeconds % 3600) / 60);
@@ -64,7 +61,7 @@ if (timeTextEl) {
 function showStopwatch() {
     if (!stopwatchEl) return;
 
-    stopwatchEl.innerText = formatStopwatch(elapsedSeconds, countdownEnded);
+    stopwatchEl.innerText = formatStopwatch(elapsedSeconds);
     stopwatchEl.style.opacity = '1';
     stopwatchEl.style.fontSize = '1.5rem';
     stopwatchEl.style.transform = 'translate(-50%, -20%)';
@@ -132,9 +129,7 @@ ipcRenderer.on('settings:update', (_e, s) => {
 function scheduleStopwatchVisibility() {
     if (countdownEnded) return;
 
-    const nextInterval = TEST_MODE
-        ? 60000
-        : randomInRange(30 * 60 * 1000, 60 * 60 * 1000);
+    const nextInterval = randomInRange(30 * 60 * 1000, 60 * 60 * 1000);
 
     visibilityTimeout = setTimeout(() => {
         if (countdownEnded) return;
@@ -319,21 +314,14 @@ function successGoal() {
     const audio = new Audio('media/goal_success.mp3');
     audio.play().catch(e => console.error("Не удалось воспроизвести звук сбора:", e));
 
-    const secondsToAdd = goalTargetHours * 3600;
-
-    if (typeof addTime === 'function') {
-        addTime(endingTime, secondsToAdd);
-    } else {
-        endingTime = new Date(endingTime.getTime() + secondsToAdd * 1000);
-    }
+    addTime(goalTargetHours * 3600);
 
     closeGoalUI();
 }
 
 function handleDonationWithGoalSystem(rubles) {
     if (!isGoalActive) {
-        const seconds = rubles * secondsAddedPerCurrency;
-        if (typeof addTime === 'function') addTime(endingTime, seconds);
+        addTime(rubles * secondsAddedPerCurrency);
         return;
     }
 
@@ -352,8 +340,7 @@ function handleDonationWithGoalSystem(rubles) {
         updateGoalUI();
         successGoal();
 
-        const excessSeconds = excessRubles * secondsAddedPerCurrency;
-        if (typeof addTime === 'function') addTime(endingTime, excessSeconds);
+        addTime(excessRubles * secondsAddedPerCurrency);
     }
 }
 
@@ -426,7 +413,7 @@ const getNextTime = () => {
         }
     }
 
-    timeText.innerText = time;
+    timeTextEl.innerText = time;
 
     const shouldShowStopwatch = countdownEnded
         ? window.donationModeEnabled
@@ -436,7 +423,7 @@ const getNextTime = () => {
         remaining: time,
         rublesPerHour: rublesPerHour,
         showRubPerHour: showRubPerHour,
-        stopwatchText: formatStopwatch(elapsedSeconds, countdownEnded),
+        stopwatchText: formatStopwatch(elapsedSeconds),
         showStopwatch: shouldShowStopwatch,
         isGoalActive: isGoalActive,
         goalText: isGoalActive ? goalText.innerText : "Сбор: 0 / 0 руб",
@@ -450,10 +437,10 @@ const getNextTime = () => {
 
 requestAnimationFrame(getNextTime);
 
-const addTime = async (time_param, s) => {
+const addTime = async (s) => {
     if (countdownEnded && !canIncreaseTimeAfterStop) return;
 
-    endingTime = timeFunc.addSeconds(time_param, s);
+    endingTime = timeFunc.addSeconds(endingTime, s);
 
     ipcRenderer.send('overlay:event', {
         type: 'addTime',
@@ -479,17 +466,17 @@ document.addEventListener("keydown", (e) => {
     switch (e.code) {
         case "ArrowUp":
             if (e.shiftKey) {
-                addTime(endingTime, timeIncrease);
+                addTime(timeIncrease);
                 return;
             }
-            addTime(endingTime, timeMinuteIncDec)
+            addTime(timeMinuteIncDec)
             return
         case "ArrowDown":
             if (e.shiftKey) {
-                addTime(endingTime, -timeDecrease);
+                addTime(-timeDecrease);
                 return;
             }
-            addTime(endingTime, -timeMinuteIncDec)
+            addTime(-timeMinuteIncDec)
             return
         case "KeyR":
             resetTime();
@@ -522,9 +509,6 @@ document.addEventListener("keydown", (e) => {
             return;
         case "KeyO":
             ipcRenderer.send('control:toggle');
-            return;
-        case "KeyL":
-            ipcRenderer.send('history:toggle');
             return;
     }
 });
