@@ -146,6 +146,7 @@ function createAuthManager(deps) {
         pendingLogin = {state, until: Date.now() + LOGIN_TTL_MS};
         if (pendingTimer) clearTimeout(pendingTimer);
         pendingTimer = setTimeout(clearPending, LOGIN_TTL_MS);
+        if (typeof pendingTimer.unref === 'function') pendingTimer.unref();
         setAccount('donationAlerts', {loginPending: true});
 
         const url = 'https://www.donationalerts.com/oauth/authorize?' + new URLSearchParams({

@@ -94,10 +94,11 @@ function startOverlayServer(opts = {}) {
         res.end('Not found');
     }
 
-    function sendJson(res, status, obj) {
+    function sendJson(res, status, obj, extraHeaders = {}) {
         res.writeHead(status, {
             'Content-Type': 'application/json; charset=utf-8',
-            'Cache-Control': 'no-store'
+            'Cache-Control': 'no-store',
+            ...extraHeaders
         });
         res.end(JSON.stringify(obj));
     }
@@ -116,8 +117,8 @@ function startOverlayServer(opts = {}) {
             size += chunk.length;
             if (size > MAX_AUTH_BODY) {
                 aborted = true;
-                sendJson(res, 413, {ok: false, error: 'too_large'});
-                req.destroy();
+                chunks.length = 0;
+                sendJson(res, 413, {ok: false, error: 'too_large'}, {'Connection': 'close'});
                 return;
             }
             chunks.push(chunk);
