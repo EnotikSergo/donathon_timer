@@ -91,15 +91,17 @@
             return;
         }
 
+        lastProcessedTimestamp = donationTs;
+        localStorage.setItem('dx_last_processed_ts', lastProcessedTimestamp.toString());
+
         const amount = Number(donation.amountInRub || donation.amount);
-        if (amount <= 0) return;
+        if (!(amount > 0)) return;
+
+        if (typeof window.donationModeEnabled !== 'undefined' && !window.donationModeEnabled) return;
 
         if (typeof handleDonationWithGoalSystem === 'function') {
             handleDonationWithGoalSystem(amount);
         }
-
-        lastProcessedTimestamp = donationTs;
-        localStorage.setItem('dx_last_processed_ts', lastProcessedTimestamp.toString());
     }
 
     function schedulePoll() {

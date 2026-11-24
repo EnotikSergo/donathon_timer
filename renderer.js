@@ -247,6 +247,52 @@ try {
     settings.secondsAddedPerCurrency = 3600 / effective;
 })();
 
+function registerIpcHandlers() {
+    ipcMain.handle('settings:get', () => settings);
+    ipcMain.on('settings:set', (_evt, partial) => {
+        settings = Object.assign(settings, partial || {});
+        try {
+            const dataToSave = {
+                donationModeEnabled: !!settings.donationModeEnabled,
+                sleepModeEnabled: !!settings.sleepModeEnabled,
+                showRubPerHour: !!settings.showRubPerHour,
+                dynamicPriceIncreaseEnabled: settings.dynamicPriceIncreaseEnabled,
+                maxTimerTier: settings.maxTimerTier,
+                baseRubPerHour: settings.baseRubPerHour,
+                dynamicPriceStep: settings.dynamicPriceStep,
+                lanAccessEnabled: !!settings.lanAccessEnabled
+            };
+            writeFileAtomic(settingsFilePath, JSON.stringify(dataToSave, null, 2));
+        } catch (e) {
+            console.error("Не удалось сохранить настройки:", e);
+        }
+
+        if (timerWin && !timerWin.isDestroyed()) timerWin.webContents.send('settings:update', settings);
+        if (controlWin && !controlWin.isDestroyed()) controlWin.webContents.send('settings:update', settings);
+
+        if (partial && typeof partial.lanAccessEnabled !== 'undefined') applyOverlayHost();
+    });
+
+    ipcMain.on('control:toggle', () => {
+        if (!controlWin || controlWin.isDestroyed()) return;
+        if (controlWin.isVisible()) controlWin.hide(); else controlWin.show();
+    });
+
+    ipcMain.on('auth-tokens:get-sync', (e) => {
+        e.returnValue = readAuthTokens();
+    });
+    ipcMain.on('storage:paths-sync', (e) => {
+        e.returnValue = {timer: storagePaths.timer, stopwatch: storagePaths.stopwatch};
+    });
+
+    ipcMain.handle('auth-tokens:get', () => readAuthTokens());
+    ipcMain.handle('accounts:get', () => authManager.getAccounts());
+    ipcMain.handle('auth:da-login', () => authManager.startDaLogin());
+    ipcMain.handle('auth:dx-save', (_e, token) => authManager.saveDxToken(token));
+    ipcMain.handle('auth:logout', (_e, service) => authManager.logout(service));
+    ipcMain.on('auth:dx-open-settings', () => authManager.openDxSettings());
+}
+
 function createWindows() {
     timerWin = new BrowserWindow({
         width: 800,
@@ -278,33 +324,6 @@ function createWindows() {
     });
     controlWin.loadFile('control.html');
 
-    ipcMain.handle('settings:get', () => settings);
-    ipcMain.on('settings:set', (_evt, partial) => {
-        settings = Object.assign(settings, partial || {});
-        try {
-            const dataToSave = {
-                dynamicPriceIncreaseEnabled: settings.dynamicPriceIncreaseEnabled,
-                maxTimerTier: settings.maxTimerTier,
-                baseRubPerHour: settings.baseRubPerHour,
-                dynamicPriceStep: settings.dynamicPriceStep,
-                lanAccessEnabled: !!settings.lanAccessEnabled
-            };
-            writeFileAtomic(settingsFilePath, JSON.stringify(dataToSave, null, 2));
-        } catch (e) {
-            console.error("Не удалось сохранить настройки:", e);
-        }
-
-        if (timerWin && !timerWin.isDestroyed()) timerWin.webContents.send('settings:update', settings);
-        if (controlWin && !controlWin.isDestroyed()) controlWin.webContents.send('settings:update', settings);
-
-        if (partial && typeof partial.lanAccessEnabled !== 'undefined') applyOverlayHost();
-    });
-
-    ipcMain.on('control:toggle', () => {
-        if (!controlWin || controlWin.isDestroyed()) return;
-        if (controlWin.isVisible()) controlWin.hide(); else controlWin.show();
-    });
-
     timerWin.on('closed', () => {
         try {
             if (controlWin && !controlWin.isDestroyed()) controlWin.close();
@@ -319,20 +338,6 @@ function createWindows() {
     controlWin.webContents.once('did-finish-load', () => {
         controlWin.webContents.send('settings:update', settings);
     });
-
-    ipcMain.on('auth-tokens:get-sync', (e) => {
-        e.returnValue = readAuthTokens();
-    });
-    ipcMain.on('storage:paths-sync', (e) => {
-        e.returnValue = {timer: storagePaths.timer, stopwatch: storagePaths.stopwatch};
-    });
-
-    ipcMain.handle('auth-tokens:get', () => readAuthTokens());
-    ipcMain.handle('accounts:get', () => authManager.getAccounts());
-    ipcMain.handle('auth:da-login', () => authManager.startDaLogin());
-    ipcMain.handle('auth:dx-save', (_e, token) => authManager.saveDxToken(token));
-    ipcMain.handle('auth:logout', (_e, service) => authManager.logout(service));
-    ipcMain.on('auth:dx-open-settings', () => authManager.openDxSettings());
 }
 
 let overlayRestart = Promise.resolve();
@@ -361,10 +366,15 @@ function applyOverlayHost() {
 }
 
 app.whenReady().then(() => {
+    registerIpcHandlers();
     upgradeTokensStorage();
     applyOverlayHost();
     createWindows();
     authManager.init();
+});
+
+app.on('activate', () => {
+    if (!timerWin || timerWin.isDestroyed()) createWindows();
 });
 
 ipcMain.on('donation:status', (_e, data) => {

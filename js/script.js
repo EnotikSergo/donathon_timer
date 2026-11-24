@@ -166,9 +166,10 @@ const resetTime = (isStartup = false) => {
         showStopwatchState = false;
         window.maxTimerTier = 0;
         lastPriceTier = 0;
+        const baseRubPerHour = priceSettings && priceSettings.baseRubPerHour > 0 ? priceSettings.baseRubPerHour : 1000;
         ipcRenderer.send('settings:set', {
             maxTimerTier: 0,
-            secondsAddedPerCurrency: 3.6
+            secondsAddedPerCurrency: 3600 / baseRubPerHour
         });
     }
     hideStopwatch();
