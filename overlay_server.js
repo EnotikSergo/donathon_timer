@@ -234,6 +234,12 @@ function startOverlayServer(opts = {}) {
         const isOverlayPath = u.pathname === basePath || u.pathname.startsWith(basePath + '/');
         const isReadMethod = req.method === 'GET' || req.method === 'HEAD';
 
+        if (u.pathname === basePath && isReadMethod) {
+            res.writeHead(301, {'Location': basePath + '/' + u.search});
+            res.end();
+            return;
+        }
+
         if (isOverlayPath && isReadMethod) {
             handleOverlay(req, res, u);
             return;

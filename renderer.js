@@ -1,6 +1,9 @@
 const {app, BrowserWindow, ipcMain, shell, safeStorage, net} = require('electron');
 const {startOverlayServer} = require('./overlay_server');
 const {createAuthManager} = require('./auth_manager');
+const {handleSquirrelEvent} = require('./squirrel_startup');
+
+const isSquirrelEvent = handleSquirrelEvent(app);
 const fs1 = require('fs');
 const path1 = require('path');
 const {writeFileAtomic, readTextFile} = require('./js/lib/storage');
@@ -186,7 +189,7 @@ function upgradeTokensStorage() {
     }
 }
 
-migrateLegacySaves();
+if (!isSquirrelEvent) migrateLegacySaves();
 
 const OVERLAY_PORT = Number(process.env.OVERLAY_PORT || 41701);
 
@@ -369,6 +372,7 @@ function applyOverlayHost() {
 }
 
 app.whenReady().then(() => {
+    if (isSquirrelEvent) return;
     registerIpcHandlers();
     upgradeTokensStorage();
     applyOverlayHost();
@@ -377,6 +381,7 @@ app.whenReady().then(() => {
 });
 
 app.on('activate', () => {
+    if (isSquirrelEvent) return;
     if (!timerWin || timerWin.isDestroyed()) createWindows();
 });
 
