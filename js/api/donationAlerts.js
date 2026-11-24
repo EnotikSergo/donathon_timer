@@ -326,5 +326,17 @@
         dropSession();
     });
 
+    window.donationServices = window.donationServices || {};
+    window.donationServices.DA = {
+        restart() {
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+            dropSession();
+            connect();
+        }
+    };
+
     connect();
 })();

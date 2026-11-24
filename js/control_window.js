@@ -14,6 +14,7 @@ const serviceSelect = document.getElementById('serviceSelect');
 const tokenInput = document.getElementById('tokenInput');
 const requestTokenBtn = document.getElementById('requestTokenBtn');
 const applyTokenBtn = document.getElementById('applyTokenBtn');
+const logoutBtn = document.getElementById('logoutBtn');
 const tokenStatus = document.getElementById('tokenStatus');
 
 let authTokens = {};
@@ -142,16 +143,68 @@ ipcRenderer.on('donation:status', (_e, {system, status}) => {
     setIndicator(system, status);
 });
 
-function showTokenStatus(text, ok = true) {
+const STATUS_COLORS = {ok: '#2ecc71', error: '#e74c3c', warning: '#f1c40f', info: ''};
+
+let accounts = null;
+let localStatus = null;
+
+function showTokenStatus(text, kind = 'ok') {
     if (!tokenStatus) return;
     tokenStatus.textContent = text;
-    tokenStatus.style.color = ok ? '#2ecc71' : '#e74c3c';
+    tokenStatus.style.color = STATUS_COLORS[kind] || '';
+}
+
+function accountStatusText(service) {
+    const a = accounts && accounts[service];
+    if (!a) return null;
+
+    if (service === 'donationAlerts' && a.loginPending) {
+        return {text: 'Ожидание входа в браузере…', kind: 'warning'};
+    }
+    switch (a.status) {
+        case 'checking':
+            return {text: 'Проверка токена…', kind: 'info'};
+        case 'ok':
+            if (a.warning) return {text: a.warning, kind: 'warning'};
+            return {text: a.name ? `Подключено: ${a.name}` : 'Подключено', kind: 'ok'};
+        case 'invalid':
+            return {text: a.message || 'Нужна авторизация', kind: 'error'};
+        case 'unverified':
+            return {text: a.message || 'Токен не проверен', kind: 'warning'};
+        default:
+            return {text: '', kind: 'info'};
+    }
+}
+
+function renderTokenStatus() {
+    const service = serviceSelect.value;
+    if (localStatus && localStatus.service === service) {
+        showTokenStatus(localStatus.text, localStatus.kind);
+        return;
+    }
+    const status = accountStatusText(service);
+    if (status) showTokenStatus(status.text, status.kind);
+}
+
+function setLocalStatus(text, kind) {
+    localStatus = text ? {service: serviceSelect.value, text, kind} : null;
+    renderTokenStatus();
+}
+
+const SERVICE_NAMES = {donationAlerts: 'DonationAlerts', donateX: 'DonateX'};
+
+function updateLogoutButton() {
+    const service = serviceSelect.value;
+    logoutBtn.textContent = `Выйти из ${SERVICE_NAMES[service] || 'сервиса'}`;
+    logoutBtn.disabled = !authTokens[service];
 }
 
 function fillTokenField() {
     if (!serviceSelect || !tokenInput) return;
     tokenInput.value = authTokens[serviceSelect.value] || '';
-    showTokenStatus('');
+    localStatus = null;
+    renderTokenStatus();
+    updateLogoutButton();
 }
 
 async function loadAuthTokens() {
@@ -160,55 +213,103 @@ async function loadAuthTokens() {
         fillTokenField();
     } catch (e) {
         console.error('[auth] Не удалось загрузить токены:', e);
-        showTokenStatus('Не удалось загрузить токены', false);
+        setLocalStatus('Не удалось загрузить токены', 'error');
     }
 }
 
-if (serviceSelect) {
-    serviceSelect.addEventListener('change', fillTokenField);
-}
+serviceSelect.addEventListener('change', fillTokenField);
 
-if (requestTokenBtn) {
-    requestTokenBtn.addEventListener('click', () => {
-        ipcRenderer.send('auth-tokens:request', serviceSelect.value);
-        showTokenStatus('Открыта страница сервиса', true);
-    });
-}
-
-if (applyTokenBtn) {
-    applyTokenBtn.addEventListener('click', async () => {
-        const service = serviceSelect.value;
-        const token = tokenInput.value.trim();
-
-        if (!token) {
-            showTokenStatus('Введите токен', false);
-            return;
-        }
-
-        try {
-            const ok = await ipcRenderer.invoke('auth-tokens:save', {service, token});
-            if (ok) {
-                authTokens[service] = token;
-                showTokenStatus('Токен сохранён', true);
-            } else {
-                showTokenStatus('Ошибка записи файла', false);
-            }
-        } catch (e) {
-            console.error('[auth] Ошибка сохранения:', e);
-            showTokenStatus('Ошибка сохранения', false);
-        }
-    });
-}
-
-ipcRenderer.on('auth-token-received', (_e, data) => {
-    if (data && data.token) {
-        if (serviceSelect.value === data.service) {
-            tokenInput.value = data.token;
-            showTokenStatus('Токен получен и автоматически вставлен!', true);
+requestTokenBtn.addEventListener('click', async () => {
+    if (serviceSelect.value === 'donationAlerts') {
+        const result = await ipcRenderer.invoke('auth:da-login');
+        if (result && result.ok) {
+            setLocalStatus('');
         } else {
-            showTokenStatus(`Токен для ${data.service} получен. Переключите сервис для вставки.`, true);
+            setLocalStatus((result && result.error) || 'Не удалось начать вход', 'error');
         }
+    } else {
+        ipcRenderer.send('auth:dx-open-settings');
+        setLocalStatus('Открыта страница сервиса. Токен: Настройки → API и доступ', 'info');
     }
+});
+
+applyTokenBtn.addEventListener('click', async () => {
+    const service = serviceSelect.value;
+    const token = tokenInput.value.trim();
+
+    if (service === 'donationAlerts') {
+        setLocalStatus('Токен DonationAlerts применяется автоматически после входа через «Запросить токен»', 'info');
+        return;
+    }
+
+    if (!token) {
+        setLocalStatus('Введите токен', 'error');
+        return;
+    }
+
+    applyTokenBtn.disabled = true;
+    setLocalStatus('Проверка токена…', 'info');
+    try {
+        const result = await ipcRenderer.invoke('auth:dx-save', token);
+        if (result && result.ok) {
+            authTokens[service] = token;
+            setLocalStatus('');
+        } else {
+            setLocalStatus((result && result.error) || 'Ошибка сохранения', 'error');
+        }
+    } catch (e) {
+        console.error('[auth] Ошибка сохранения:', e);
+        setLocalStatus('Ошибка сохранения', 'error');
+    } finally {
+        applyTokenBtn.disabled = false;
+    }
+});
+
+logoutBtn.addEventListener('click', async () => {
+    const service = serviceSelect.value;
+    if (!authTokens[service]) return;
+
+    logoutBtn.disabled = true;
+    try {
+        const result = await ipcRenderer.invoke('auth:logout', service);
+        if (result && result.ok) {
+            authTokens[service] = '';
+            tokenInput.value = '';
+            setLocalStatus(service === 'donationAlerts'
+                ? 'Токен удалён. Полностью отозвать доступ можно в настройках DonationAlerts'
+                : 'Токен удалён из программы', 'info');
+        } else {
+            setLocalStatus((result && result.error) || 'Не удалось выйти', 'error');
+        }
+    } catch (e) {
+        console.error('[auth] Ошибка выхода:', e);
+        setLocalStatus('Не удалось выйти', 'error');
+    } finally {
+        updateLogoutButton();
+    }
+});
+
+ipcRenderer.on('auth-tokens:changed', (_e, tokens) => {
+    const previous = authTokens;
+    authTokens = tokens || {};
+    const service = serviceSelect.value;
+    if ((previous[service] || '') !== (authTokens[service] || '')) {
+        tokenInput.value = authTokens[service] || '';
+    }
+    if (service === 'donationAlerts' && authTokens.donationAlerts && previous.donationAlerts !== authTokens.donationAlerts) {
+        localStatus = null;
+    }
+    renderTokenStatus();
+    updateLogoutButton();
+});
+
+ipcRenderer.invoke('accounts:get').then((a) => {
+    accounts = a;
+    renderTokenStatus();
+});
+ipcRenderer.on('accounts:update', (_e, a) => {
+    accounts = a;
+    renderTokenStatus();
 });
 
 loadAuthTokens();

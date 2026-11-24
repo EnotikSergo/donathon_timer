@@ -5,7 +5,9 @@ const {URL} = require('url');
 
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
-const AUTH_SERVICES = new Set(['donationAlerts']);
+const AUTH_PAGE_PATH = '/auth/da';
+const AUTH_CALLBACK_PATH = '/auth/da/callback';
+const MAX_AUTH_BODY = 8 * 1024;
 
 function mime(file) {
     const ext = path.extname(file).toLowerCase();
@@ -92,37 +94,82 @@ function startOverlayServer(opts = {}) {
         res.end('Not found');
     }
 
-    function handleAuth(req, res, u) {
-        if (u.pathname === '/auth/save') {
-            if (isCrossSiteRequest(req)) {
-                res.writeHead(403, {'Content-Type': 'text/plain; charset=utf-8'});
-                res.end('Forbidden');
-                return;
-            }
+    function sendJson(res, status, obj) {
+        res.writeHead(status, {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store'
+        });
+        res.end(JSON.stringify(obj));
+    }
 
-            const service = u.searchParams.get('service');
-            const token = u.searchParams.get('token');
-
-            res.writeHead(200, {'Content-Type': 'application/json; charset=utf-8'});
-
-            if (service && AUTH_SERVICES.has(service) && token && opts.onAuth) {
-                opts.onAuth(service, token);
-                res.end(JSON.stringify({ok: true}));
-            } else {
-                res.end(JSON.stringify({ok: false}));
-            }
+    function handleAuthCallback(req, res) {
+        if (isCrossSiteRequest(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) {
+            sendJson(res, 403, {ok: false, error: 'forbidden'});
             return;
         }
 
-        const filePath = path.join(__dirname, 'auth_success.html');
-        fs.readFile(filePath, (err, buf) => {
-            if (err) {
-                notFound(res);
+        let size = 0;
+        const chunks = [];
+        let aborted = false;
+        req.on('data', (chunk) => {
+            if (aborted) return;
+            size += chunk.length;
+            if (size > MAX_AUTH_BODY) {
+                aborted = true;
+                sendJson(res, 413, {ok: false, error: 'too_large'});
+                req.destroy();
                 return;
             }
-            res.writeHead(200, {'Content-Type': 'text/html; charset=utf-8'});
-            res.end(buf);
+            chunks.push(chunk);
         });
+        req.on('end', async () => {
+            if (aborted) return;
+            let payload;
+            try {
+                payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+            } catch {
+                sendJson(res, 400, {ok: false, error: 'bad_json'});
+                return;
+            }
+            try {
+                const result = await opts.onAuthCallback('donationAlerts', payload);
+                sendJson(res, result && result.ok ? 200 : 400, result || {ok: false});
+            } catch (e) {
+                sendJson(res, 500, {ok: false, error: 'internal'});
+            }
+        });
+    }
+
+    function handleAuth(req, res, u) {
+        const pending = typeof opts.isAuthPending === 'function' && opts.isAuthPending('donationAlerts');
+        if (!pending) {
+            notFound(res);
+            return;
+        }
+
+        if (u.pathname === AUTH_CALLBACK_PATH && req.method === 'POST' && typeof opts.onAuthCallback === 'function') {
+            handleAuthCallback(req, res);
+            return;
+        }
+
+        if (u.pathname === AUTH_PAGE_PATH && (req.method === 'GET' || req.method === 'HEAD')) {
+            const filePath = path.join(__dirname, 'auth_success.html');
+            fs.readFile(filePath, (err, buf) => {
+                if (err) {
+                    notFound(res);
+                    return;
+                }
+                res.writeHead(200, {
+                    'Content-Type': 'text/html; charset=utf-8',
+                    'Cache-Control': 'no-store',
+                    'Referrer-Policy': 'no-referrer'
+                });
+                res.end(buf);
+            });
+            return;
+        }
+
+        notFound(res);
     }
 
     function handleOverlay(req, res, u) {
@@ -192,7 +239,7 @@ function startOverlayServer(opts = {}) {
             return;
         }
 
-        if (u.pathname.startsWith('/auth/') && isReadMethod && isLocalRequest(req)) {
+        if (u.pathname.startsWith('/auth/') && isLocalRequest(req)) {
             handleAuth(req, res, u);
             return;
         }

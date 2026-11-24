@@ -26,15 +26,17 @@
             if (isConnected) {
                 isConnected = false;
                 sendStatus('disconnected');
-                console.warn('[DX] Токен отсутствует в config.js');
+                console.warn('[DX] Токен не задан');
             }
             schedulePoll();
             return;
         }
 
         try {
-            const url = `${API_URL}?skip=0&take=30&sortOrder=NewestFirst&token=${encodeURIComponent(donateXToken)}`;
-            const response = await fetch(url);
+            const url = `${API_URL}?skip=0&take=30&sortOrder=NewestFirst`;
+            const response = await fetch(url, {
+                headers: {'X-External-Token': donateXToken}
+            });
 
             if (!response.ok) {
                 if (response.status === 401 || response.status === 403) {
@@ -104,6 +106,19 @@
         if (pollTimeout) clearTimeout(pollTimeout);
         pollTimeout = setTimeout(fetchDonations, POLL_INTERVAL);
     }
+
+    window.donationServices = window.donationServices || {};
+    window.donationServices.DX = {
+        restart() {
+            if (pollTimeout) {
+                clearTimeout(pollTimeout);
+                pollTimeout = null;
+            }
+            isConnected = false;
+            sendStatus('disconnected');
+            fetchDonations();
+        }
+    };
 
     fetchDonations();
 })();

@@ -189,6 +189,11 @@ input::-webkit-inner-spin-button {
     -webkit-app-region: no-drag;
 }
 
+.token-buttons button:disabled {
+    opacity: .45;
+    cursor: default;
+}
+
 .token-buttons button:active {
     transform: scale(0.98);
 }

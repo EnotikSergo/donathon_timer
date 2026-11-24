@@ -20,9 +20,20 @@
 
         ipcRenderer.invoke('settings:get').then(apply);
         ipcRenderer.on('settings:update', (_e, s) => apply(s));
-        ipcRenderer.on('auth-tokens:updated', () => {
-            console.log('[Bridge] Токены обновлены. Перезагрузка окна таймера для применения...');
-            window.location.reload();
+        ipcRenderer.on('auth-tokens:updated', (_e, tokens) => {
+            const t = tokens || {};
+            const services = window.donationServices || {};
+
+            if ((t.donationAlerts || '') !== donationAlertsToken) {
+                donationAlertsToken = t.donationAlerts || '';
+                console.log('[Bridge] Токен DonationAlerts обновлён, переподключение');
+                if (services.DA) services.DA.restart();
+            }
+            if ((t.donateX || '') !== donateXToken) {
+                donateXToken = t.donateX || '';
+                console.log('[Bridge] Токен DonateX обновлён, переподключение');
+                if (services.DX) services.DX.restart();
+            }
         });
 
     } catch (e) {

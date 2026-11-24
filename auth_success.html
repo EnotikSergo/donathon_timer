@@ -44,33 +44,50 @@
         const message = document.getElementById('message');
         const spinner = document.getElementById('spinner');
 
-        const hash = window.location.hash.substring(1);
-        const params = new URLSearchParams(hash);
+        const params = new URLSearchParams(window.location.hash.substring(1));
         const token = params.get('access_token');
+        const authError = params.get('error') || new URLSearchParams(window.location.search).get('error');
+
+        if (window.location.hash) {
+            history.replaceState(null, '', window.location.pathname);
+        }
+
+        function showResult(ok, heading, text) {
+            title.innerText = heading;
+            title.className = ok ? 'success' : 'error';
+            message.innerText = text;
+            spinner.style.display = 'none';
+        }
+
+        const errorTexts = {
+            state_mismatch: 'Ответ не совпадает с запросом входа. Нажмите «Запросить токен» в программе ещё раз.',
+            not_pending: 'Вход не был начат или время ожидания истекло. Нажмите «Запросить токен» в программе ещё раз.',
+            save_failed: 'Программа не смогла сохранить токен. Подробности в окне программы.'
+        };
 
         if (token) {
-            fetch(`/auth/save?service=donationAlerts&token=${encodeURIComponent(token)}`)
-                .then(res => res.json())
+            fetch('/auth/da/callback', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    access_token: token,
+                    expires_in: params.get('expires_in'),
+                    state: params.get('state')
+                })
+            })
+                .then(res => res.json().catch(() => ({ok: false})))
                 .then(data => {
                     if (data.ok) {
-                        title.innerText = 'Авторизация успешна!';
-                        title.className = 'success';
-                        message.innerText = 'Можете закрыть эту вкладку.';
+                        showResult(true, 'Авторизация успешна!', 'Можете закрыть эту вкладку и вернуться в программу.');
                     } else {
-                        throw new Error('Server error');
+                        showResult(false, 'Ошибка авторизации', errorTexts[data.error] || 'Попробуйте ещё раз.');
                     }
                 })
-                .catch(err => {
-                    title.innerText = 'Ошибка передачи';
-                    title.className = 'error';
-                    message.innerText = 'Попробуйте еще раз.';
-                })
-                .finally(() => { spinner.style.display = 'none'; });
+                .catch(() => showResult(false, 'Ошибка передачи', 'Программа не отвечает. Убедитесь, что она запущена, и попробуйте ещё раз.'));
+        } else if (authError) {
+            showResult(false, 'Доступ не выдан', 'Вход в DonationAlerts отменён. Нажмите «Запросить токен» в программе, чтобы попробовать снова.');
         } else {
-            title.innerText = 'Токен не найден';
-            title.className = 'error';
-            message.innerText = 'В URL отсутствует токен доступа. Пожалуйста, попробуйте авторизоваться снова.';
-            spinner.style.display = 'none';
+            showResult(false, 'Токен не найден', 'В адресе нет токена доступа. Нажмите «Запросить токен» в программе ещё раз.');
         }
     </script>
 </body>

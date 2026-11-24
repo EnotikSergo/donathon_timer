@@ -1,5 +1,6 @@
-const {app, BrowserWindow, ipcMain, shell, safeStorage} = require('electron');
+const {app, BrowserWindow, ipcMain, shell, safeStorage, net} = require('electron');
 const {startOverlayServer} = require('./overlay_server');
+const {createAuthManager} = require('./auth_manager');
 const fs1 = require('fs');
 const path1 = require('path');
 const {writeFileAtomic, readTextFile} = require('./js/lib/storage');
@@ -13,7 +14,8 @@ const storagePaths = {
     tokens: path1.join(savesDir, 'auth_tokens.json'),
     timer: path1.join(savesDir, 'timer_value.txt'),
     stopwatch: path1.join(savesDir, 'stopwatch_save.txt'),
-    migration: path1.join(savesDir, 'migration.json')
+    migration: path1.join(savesDir, 'migration.json'),
+    authMeta: path1.join(savesDir, 'auth_meta.json')
 };
 const settingsFilePath = storagePaths.settings;
 const tokensFilePath = storagePaths.tokens;
@@ -104,6 +106,74 @@ function updateAuthToken(service, token) {
     writeAuthTokens(tokens);
 }
 
+function removeAuthToken(service) {
+    const {tokens} = readTokensFile();
+    delete tokens[service];
+    writeAuthTokens(tokens);
+}
+
+function readAuthMeta() {
+    try {
+        const raw = readTextFile(storagePaths.authMeta);
+        return raw === null ? {} : (JSON.parse(raw) || {});
+    } catch (e) {
+        console.error('[auth] Не удалось прочитать данные аккаунтов:', e);
+        return {};
+    }
+}
+
+function writeAuthMeta(data) {
+    writeFileAtomic(storagePaths.authMeta, JSON.stringify(data, null, 2));
+}
+
+function httpGetJson(url, headers = {}, timeoutMs = 8000) {
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const request = net.request({url, method: 'GET'});
+        for (const [k, v] of Object.entries(headers)) request.setHeader(k, v);
+        request.setHeader('Accept', 'application/json');
+
+        const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            try {
+                request.abort();
+            } catch {
+            }
+            reject(new Error('timeout'));
+        }, timeoutMs);
+
+        request.on('response', (response) => {
+            const chunks = [];
+            response.on('data', (chunk) => chunks.push(chunk));
+            response.on('end', () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                let json = null;
+                try {
+                    json = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+                } catch {
+                }
+                resolve({status: response.statusCode, json});
+            });
+            response.on('error', (e) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                reject(e);
+            });
+        });
+        request.on('error', (e) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            reject(e);
+        });
+        request.end();
+    });
+}
+
 function upgradeTokensStorage() {
     try {
         const {tokens, encrypted} = readTokensFile();
@@ -119,6 +189,29 @@ function upgradeTokensStorage() {
 migrateLegacySaves();
 
 const OVERLAY_PORT = Number(process.env.OVERLAY_PORT || 41701);
+
+const authManager = createAuthManager({
+    tokens: {
+        read: readAuthTokens,
+        update: updateAuthToken,
+        remove: removeAuthToken
+    },
+    meta: {
+        read: readAuthMeta,
+        write: writeAuthMeta
+    },
+    httpGetJson,
+    openExternal: (url) => shell.openExternal(url),
+    overlayPort: OVERLAY_PORT,
+    onChange: (accounts) => {
+        if (controlWin && !controlWin.isDestroyed()) controlWin.webContents.send('accounts:update', accounts);
+    },
+    onTokensChanged: () => {
+        const tokens = readAuthTokens();
+        if (timerWin && !timerWin.isDestroyed()) timerWin.webContents.send('auth-tokens:updated', tokens);
+        if (controlWin && !controlWin.isDestroyed()) controlWin.webContents.send('auth-tokens:changed', tokens);
+    }
+});
 
 let overlay = null;
 let overlayHost = null;
@@ -227,7 +320,6 @@ function createWindows() {
         controlWin.webContents.send('settings:update', settings);
     });
 
-    ipcMain.handle('auth-tokens:get', () => readAuthTokens());
     ipcMain.on('auth-tokens:get-sync', (e) => {
         e.returnValue = readAuthTokens();
     });
@@ -235,49 +327,12 @@ function createWindows() {
         e.returnValue = {timer: storagePaths.timer, stopwatch: storagePaths.stopwatch};
     });
 
-    ipcMain.handle('auth-tokens:save', (_e, payload) => {
-        if (!payload || !AUTH_SERVICES.includes(payload.service)) return false;
-
-        try {
-            updateAuthToken(payload.service, (payload.token || '').trim());
-
-            if (timerWin && !timerWin.isDestroyed()) {
-                timerWin.webContents.send('auth-tokens:updated');
-            }
-
-            return true;
-        } catch (e) {
-            console.error('[auth] Не удалось сохранить токен:', e);
-            return false;
-        }
-    });
-
-    ipcMain.on('auth-tokens:request', (_e, service) => {
-        if (service === 'donationAlerts') {
-            const authUrl = `https://www.donationalerts.com/oauth/authorize?client_id=21868&redirect_uri=http://localhost:41701/auth/da&response_type=token&scope=oauth-user-show%20oauth-donation-subscribe`;
-            shell.openExternal(authUrl);
-        } else if (service === 'donateX') {
-            shell.openExternal('https://donatex.gg/streamer/settings');
-        }
-    });
-}
-
-function handleAuthFromOverlay(service, token) {
-    console.log(`[Auth] Получен токен для сервиса: ${service}`);
-
-    try {
-        updateAuthToken(service, token);
-    } catch (e) {
-        console.error('[Auth] Ошибка сохранения токена:', e);
-    }
-
-    if (controlWin && !controlWin.isDestroyed()) {
-        controlWin.webContents.send('auth-token-received', { service, token });
-    }
-
-    if (timerWin && !timerWin.isDestroyed()) {
-        timerWin.webContents.send('auth-tokens:updated');
-    }
+    ipcMain.handle('auth-tokens:get', () => readAuthTokens());
+    ipcMain.handle('accounts:get', () => authManager.getAccounts());
+    ipcMain.handle('auth:da-login', () => authManager.startDaLogin());
+    ipcMain.handle('auth:dx-save', (_e, token) => authManager.saveDxToken(token));
+    ipcMain.handle('auth:logout', (_e, service) => authManager.logout(service));
+    ipcMain.on('auth:dx-open-settings', () => authManager.openDxSettings());
 }
 
 let overlayRestart = Promise.resolve();
@@ -298,7 +353,8 @@ function applyOverlayHost() {
             port: OVERLAY_PORT,
             host,
             basePath: '/overlay',
-            onAuth: handleAuthFromOverlay
+            isAuthPending: (service) => authManager.isAuthPending(service),
+            onAuthCallback: (_service, payload) => authManager.handleDaCallback(payload)
         });
     }).catch((e) => console.error('[overlay] Не удалось перезапустить сервер:', e));
     return overlayRestart;
@@ -308,6 +364,7 @@ app.whenReady().then(() => {
     upgradeTokensStorage();
     applyOverlayHost();
     createWindows();
+    authManager.init();
 });
 
 ipcMain.on('donation:status', (_e, data) => {
