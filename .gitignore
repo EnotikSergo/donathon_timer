@@ -3,6 +3,4 @@ out
 
 .idea
 
-saves/auth_tokens.json
-saves/timer_value.txt
-saves/stopwatch_save.txt
+saves/

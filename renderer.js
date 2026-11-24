@@ -1,21 +1,122 @@
-const {app, BrowserWindow, ipcMain, shell} = require('electron');
+const {app, BrowserWindow, ipcMain, shell, safeStorage} = require('electron');
 const {startOverlayServer} = require('./overlay_server');
 const fs1 = require('fs');
 const path1 = require('path');
+const {writeFileAtomic, readTextFile} = require('./js/lib/storage');
 
-const settingsFilePath = path1.join(__dirname, 'saves/settings.json');
-const tokensFilePath = path1.join(__dirname, 'saves/auth_tokens.json');
+const AUTH_SERVICES = ['donationAlerts', 'donateX'];
+
+const savesDir = path1.join(app.getPath('userData'), 'saves');
+const legacySavesDir = path1.join(__dirname, 'saves');
+const storagePaths = {
+    settings: path1.join(savesDir, 'settings.json'),
+    tokens: path1.join(savesDir, 'auth_tokens.json'),
+    timer: path1.join(savesDir, 'timer_value.txt'),
+    stopwatch: path1.join(savesDir, 'stopwatch_save.txt'),
+    migration: path1.join(savesDir, 'migration.json')
+};
+const settingsFilePath = storagePaths.settings;
+const tokensFilePath = storagePaths.tokens;
+
+function migrateLegacySaves() {
+    if (fs1.existsSync(storagePaths.migration)) return;
+
+    const files = ['settings.json', 'auth_tokens.json', 'timer_value.txt', 'stopwatch_save.txt'];
+    const copied = [];
+    for (const name of files) {
+        const target = path1.join(savesDir, name);
+        try {
+            if (fs1.existsSync(target)) continue;
+            const data = readTextFile(path1.join(legacySavesDir, name));
+            if (data === null) continue;
+            writeFileAtomic(target, data);
+            copied.push(name);
+        } catch (e) {
+            console.error(`[storage] Не удалось перенести ${name}:`, e);
+        }
+    }
+
+    try {
+        writeFileAtomic(storagePaths.migration, JSON.stringify({
+            from: legacySavesDir,
+            copied,
+            at: new Date().toISOString()
+        }, null, 2));
+        if (copied.length) console.log(`[storage] Сохранения перенесены в ${savesDir}: ${copied.join(', ')}`);
+    } catch (e) {
+        console.error('[storage] Не удалось записать отметку о переносе:', e);
+    }
+}
+
+function pickKnownTokens(obj) {
+    const result = {};
+    for (const service of AUTH_SERVICES) {
+        if (obj && typeof obj[service] === 'string' && obj[service]) result[service] = obj[service];
+    }
+    return result;
+}
+
+function canEncrypt() {
+    try {
+        return app.isReady() && safeStorage.isEncryptionAvailable();
+    } catch {
+        return false;
+    }
+}
+
+function readTokensFile() {
+    const raw = readTextFile(tokensFilePath);
+    if (raw === null) return {tokens: {}, encrypted: false};
+
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.encrypted === true) {
+        if (!canEncrypt()) throw new Error('Шифрование недоступно, токены прочитать нельзя');
+        const json = safeStorage.decryptString(Buffer.from(parsed.data, 'base64'));
+        return {tokens: pickKnownTokens(JSON.parse(json)), encrypted: true};
+    }
+    return {tokens: pickKnownTokens(parsed), encrypted: false};
+}
 
 function readAuthTokens() {
     try {
-        if (fs1.existsSync(tokensFilePath)) {
-            return JSON.parse(fs1.readFileSync(tokensFilePath, 'utf8'));
-        }
+        return readTokensFile().tokens;
     } catch (e) {
         console.error('[auth] Не удалось прочитать токены:', e);
+        return {};
     }
-    return {};
 }
+
+function writeAuthTokens(all) {
+    const tokens = pickKnownTokens(all);
+    const payload = canEncrypt()
+        ? {
+            version: 1,
+            encrypted: true,
+            data: safeStorage.encryptString(JSON.stringify(tokens)).toString('base64')
+        }
+        : tokens;
+    writeFileAtomic(tokensFilePath, JSON.stringify(payload, null, 2));
+}
+
+function updateAuthToken(service, token) {
+    const {tokens} = readTokensFile();
+    tokens[service] = token;
+    writeAuthTokens(tokens);
+}
+
+function upgradeTokensStorage() {
+    try {
+        const {tokens, encrypted} = readTokensFile();
+        if (!encrypted && canEncrypt() && fs1.existsSync(tokensFilePath)) {
+            writeAuthTokens(tokens);
+            console.log('[auth] Токены зашифрованы');
+        }
+    } catch (e) {
+        console.error('[auth] Не удалось обновить хранилище токенов:', e);
+    }
+}
+
+migrateLegacySaves();
 
 const OVERLAY_PORT = Number(process.env.OVERLAY_PORT || 41701);
 
@@ -24,30 +125,25 @@ let overlayHost = null;
 let timerWin = null;
 let controlWin = null;
 
-let settings = {
+const DEFAULT_SETTINGS = {
     donationModeEnabled: true,
     sleepModeEnabled: false,
     secondsAddedPerCurrency: 3.6,
     showRubPerHour: true,
-    dynamicPriceIncreaseEnabled: true,
+    dynamicPriceIncreaseEnabled: false,
     maxTimerTier: 0,
     baseRubPerHour: 1000,
-    dynamicPriceStep: 1000,
+    dynamicPriceStep: 500,
     lanAccessEnabled: false
 };
 
-if (fs1.existsSync(settingsFilePath)) {
-    try {
-        const savedSettings = JSON.parse(fs1.readFileSync(settingsFilePath, 'utf8'));
-        settings = Object.assign(settings, savedSettings);
+let settings = Object.assign({}, DEFAULT_SETTINGS);
 
-        if (typeof savedSettings.maxTimerTier !== 'undefined') {
-            settings.maxTimerTier = savedSettings.maxTimerTier;
-        }
-    } catch (e) {
-        console.error("Не удалось прочесть файл настроек:", e);
-    }
-
+try {
+    const raw = readTextFile(settingsFilePath);
+    if (raw !== null) settings = Object.assign(settings, JSON.parse(raw));
+} catch (e) {
+    console.error("Не удалось прочесть файл настроек:", e);
 }
 
 (function recalcSecondsPerCurrency() {
@@ -100,7 +196,7 @@ function createWindows() {
                 dynamicPriceStep: settings.dynamicPriceStep,
                 lanAccessEnabled: !!settings.lanAccessEnabled
             };
-            fs1.writeFileSync(settingsFilePath, JSON.stringify(dataToSave, null, 2), 'utf8');
+            writeFileAtomic(settingsFilePath, JSON.stringify(dataToSave, null, 2));
         } catch (e) {
             console.error("Не удалось сохранить настройки:", e);
         }
@@ -135,15 +231,15 @@ function createWindows() {
     ipcMain.on('auth-tokens:get-sync', (e) => {
         e.returnValue = readAuthTokens();
     });
+    ipcMain.on('storage:paths-sync', (e) => {
+        e.returnValue = {timer: storagePaths.timer, stopwatch: storagePaths.stopwatch};
+    });
 
     ipcMain.handle('auth-tokens:save', (_e, payload) => {
-        if (!payload || !payload.service) return false;
-
-        const all = readAuthTokens();
-        all[payload.service] = (payload.token || '').trim();
+        if (!payload || !AUTH_SERVICES.includes(payload.service)) return false;
 
         try {
-            fs1.writeFileSync(tokensFilePath, JSON.stringify(all, null, 2), 'utf8');
+            updateAuthToken(payload.service, (payload.token || '').trim());
 
             if (timerWin && !timerWin.isDestroyed()) {
                 timerWin.webContents.send('auth-tokens:updated');
@@ -169,10 +265,8 @@ function createWindows() {
 function handleAuthFromOverlay(service, token) {
     console.log(`[Auth] Получен токен для сервиса: ${service}`);
 
-    const all = readAuthTokens();
-    all[service] = token;
     try {
-        fs1.writeFileSync(tokensFilePath, JSON.stringify(all, null, 2), 'utf8');
+        updateAuthToken(service, token);
     } catch (e) {
         console.error('[Auth] Ошибка сохранения токена:', e);
     }
@@ -211,6 +305,7 @@ function applyOverlayHost() {
 }
 
 app.whenReady().then(() => {
+    upgradeTokensStorage();
     applyOverlayHost();
     createWindows();
 });

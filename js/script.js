@@ -1,9 +1,9 @@
 const {ipcRenderer} = require('electron');
-const fs = require('fs');
 const path = require('path');
+const {writeFileAtomic, readTextFile, removeFile} = require(path.join(__dirname, 'js/lib/storage.js'));
 
-const timerFilePath = path.join(__dirname, 'saves/timer_value.txt');
-const stopwatchFilePath = path.join(__dirname, 'saves/stopwatch_save.txt');
+const {timer: timerFilePath, stopwatch: stopwatchFilePath} = ipcRenderer.sendSync('storage:paths-sync');
+let priceSettings = null;
 
 let endingTime = new Date(Date.now());
 let pauseTime = 0;
@@ -96,6 +96,12 @@ function updateRubPerHourUI() {
 ipcRenderer.on('settings:update', (_e, s) => {
     if (!s) return;
 
+    priceSettings = {
+        dynamicPriceIncreaseEnabled: !!s.dynamicPriceIncreaseEnabled,
+        baseRubPerHour: Number(s.baseRubPerHour),
+        dynamicPriceStep: Number(s.dynamicPriceStep)
+    };
+
     let priceChanged = false;
     if (typeof s.secondsAddedPerCurrency !== 'undefined' && s.secondsAddedPerCurrency > 0) {
         const newRublesPerHour = Math.round(3600 / s.secondsAddedPerCurrency);
@@ -178,9 +184,9 @@ clearTimeout(hideTimeout);
 showStopwatchState = true;
 showStopwatch()
 
-if (fs.existsSync(timerFilePath)) {
-    try {
-        const savedTimeStr = fs.readFileSync(timerFilePath, 'utf-8').trim();
+try {
+    const savedTimeStr = (readTextFile(timerFilePath) || '').trim();
+    if (savedTimeStr) {
         const parts = savedTimeStr.split(':');
 
         if (parts.length === 3) {
@@ -196,20 +202,19 @@ if (fs.existsSync(timerFilePath)) {
                 endingTime = new Date(currentTime + savedMs);
             }
         }
-    } catch (err) {
     }
+} catch (err) {
+    console.error("Ошибка чтения файла таймера:", err);
 }
 
-if (fs.existsSync(stopwatchFilePath)) {
-    try {
-        const savedData = fs.readFileSync(stopwatchFilePath, 'utf8').trim();
-        if (savedData) {
-            elapsedSeconds = parseInt(savedData, 10) || 0;
-            lastPriceTier = Math.floor(elapsedSeconds / THREE_DAYS_IN_SECONDS);
-        }
-    } catch (e) {
-        console.error("Ошибка чтения файла секундомера:", e);
+try {
+    const savedData = (readTextFile(stopwatchFilePath) || '').trim();
+    if (savedData) {
+        elapsedSeconds = parseInt(savedData, 10) || 0;
+        lastPriceTier = Math.floor(elapsedSeconds / THREE_DAYS_IN_SECONDS);
     }
+} catch (e) {
+    console.error("Ошибка чтения файла секундомера:", e);
 }
 
 if (isGreenBackground) {
@@ -224,7 +229,7 @@ setInterval(() => {
     if (!isPause && !countdownEnded && window.donationModeEnabled) {
         elapsedSeconds++;
         try {
-            fs.writeFileSync(stopwatchFilePath, elapsedSeconds.toString(), 'utf8');
+            writeFileAtomic(stopwatchFilePath, elapsedSeconds.toString());
         } catch (e) {
         }
         const currentPriceTier = Math.floor(elapsedSeconds / THREE_DAYS_IN_SECONDS);
@@ -244,9 +249,7 @@ setInterval(() => {
         }
 
         try {
-            if (fs.existsSync(stopwatchFilePath)) {
-                fs.unlinkSync(stopwatchFilePath);
-            }
+            removeFile(stopwatchFilePath);
         } catch (e) {
         }
     } else {
@@ -259,17 +262,15 @@ setInterval(() => {
 }, 1000);
 
 function checkPriceTiers() {
-    let settingsFilePath = path.join(__dirname, 'saves/settings.json');
-    const savedSettings = JSON.parse(fs.readFileSync(settingsFilePath, 'utf8'));
-    if (!savedSettings.dynamicPriceIncreaseEnabled) return;
+    if (!priceSettings || !priceSettings.dynamicPriceIncreaseEnabled) return;
 
     const swTiers = lastPriceTier > 0 ? lastPriceTier : 0;
     const tmTiers = window.maxTimerTier || 0;
 
     const highestTier = Math.max(swTiers, tmTiers);
 
-    const basePrice = savedSettings.baseRubPerHour || 1000;
-    const stepPrice = savedSettings.dynamicPriceStep || 1000;
+    const basePrice = priceSettings.baseRubPerHour || 1000;
+    const stepPrice = priceSettings.dynamicPriceStep || 1000;
 
     const expectedRubPerHour = basePrice + (highestTier * stepPrice);
 
@@ -381,7 +382,7 @@ const getNextTime = () => {
 
     if (differenceTime > 0 && time !== lastSavedTime) {
         try {
-            fs.writeFileSync(timerFilePath, time, 'utf-8');
+            writeFileAtomic(timerFilePath, time);
             lastSavedTime = time;
         } catch (err) {
         }
@@ -405,11 +406,9 @@ const getNextTime = () => {
         }
         time = "00:00:00";
 
-        if (fs.existsSync(timerFilePath)) {
-            try {
-                fs.unlinkSync(timerFilePath);
-            } catch (err) {
-            }
+        try {
+            removeFile(timerFilePath);
+        } catch (err) {
         }
     }
 
