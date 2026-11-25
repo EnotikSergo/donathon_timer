@@ -1,30 +1,40 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {createBrowserEnv} = require('./helpers/fake_env');
+const {createServiceEnv} = require('./helpers/fake_env');
+const {createDonationAlerts} = require('../core/donations/donation_alerts');
 
 const CHANNEL = '$alerts:donation_5';
 
 function createDaEnv({token = 'tok', list = [], oauth = null, listResponse = null} = {}) {
-    const env = createBrowserEnv();
+    const env = createServiceEnv();
     const state = {oauth, list: listResponse || {status: 200, json: {data: list}}};
     const donations = [];
-    env.ctx.donationAlertsToken = token;
-    env.ctx.donationModeEnabled = true;
-    env.ctx.handleDonationWithGoalSystem = (amount) => donations.push(amount);
+    const statuses = [];
+    const ctx = {token, donationModeEnabled: true, authInvalid: 0};
     env.onFetch(async (url) => {
         if (url.endsWith('/user/oauth')) return state.oauth || {status: 200, json: {data: {id: 5, socket_connection_token: 'sock'}}};
         if (url.endsWith('/centrifuge/subscribe')) return {status: 200, json: {channels: [{channel: CHANNEL, token: 'chan'}]}};
         if (url.endsWith('/alerts/donations')) return state.list;
         return {status: 404};
     });
-    env.load('js/api/donationAlerts.js');
+    const service = createDonationAlerts({
+        ...env.deps,
+        getToken: () => ctx.token,
+        isDonationModeEnabled: () => ctx.donationModeEnabled,
+        onDonation: (amount) => donations.push(amount),
+        onStatus: (status) => statuses.push(status),
+        onAuthInvalid: () => ctx.authInvalid++
+    });
+    service.start();
 
     const da = {
         env,
+        ctx,
+        service,
         state,
         donations,
         ws: () => env.sockets.at(-1),
-        statuses: () => env.statuses('DA'),
+        statuses: () => statuses,
         oauthCalls: () => env.fetchLog.filter((r) => r.url.endsWith('/user/oauth')).length,
         async handshake() {
             await env.clock.flush();
@@ -102,9 +112,9 @@ test('валюта: сумма в основной валюте; рубли бе
 
 test('донат при выключенном донат-режиме не засчитывается ни сейчас, ни позже', async () => {
     const da = await connectedDa();
-    da.env.ctx.donationModeEnabled = false;
+    da.ctx.donationModeEnabled = false;
     da.push(7);
-    da.env.ctx.donationModeEnabled = true;
+    da.ctx.donationModeEnabled = true;
     da.push(7);
     await da.env.clock.flush();
     assert.deepEqual(da.donations, []);
@@ -206,21 +216,21 @@ test('401 → переподключения прекращаются, main по
     await da.env.clock.advance(120000);
     assert.equal(da.oauthCalls(), calls);
     assert.equal(da.statuses().at(-1), 'error');
-    assert.deepEqual(da.env.ipc.sentOn('auth:invalid'), ['donationAlerts']);
+    assert.equal(da.ctx.authInvalid, 1);
 });
 
 test('restart: новый токен подключает заново, пустой — отключает', async () => {
     const da = createDaEnv({oauth: {status: 401}});
     await da.env.clock.advance(100);
     da.state.oauth = null;
-    da.env.ctx.donationAlertsToken = 'tok2';
-    da.env.ctx.donationServices.DA.restart();
+    da.ctx.token = 'tok2';
+    da.service.restart();
     await da.handshake();
     assert.equal(da.statuses().at(-1), 'connected');
     assert.equal(da.env.fetchLog.at(-1).headers.Authorization, 'Bearer tok2');
 
-    da.env.ctx.donationAlertsToken = '';
-    da.env.ctx.donationServices.DA.restart();
+    da.ctx.token = '';
+    da.service.restart();
     await da.env.clock.flush();
     assert.equal(da.statuses().at(-1), 'disconnected');
 });

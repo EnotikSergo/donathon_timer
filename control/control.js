@@ -1,4 +1,4 @@
-const {ipcRenderer} = require('electron');
+const ipcRenderer = window.controlBridge;
 
 const toggleBtn = document.getElementById('togglePanelBtn');
 const sleepToggle = document.getElementById('sleepModeToggle');
@@ -66,8 +66,6 @@ function apply(s) {
 
     if (typeof s.baseRubPerHour !== 'undefined') {
         rubPerHourInput.value = Math.round(s.baseRubPerHour);
-    } else if (typeof s.secondsAddedPerCurrency !== 'undefined' && s.secondsAddedPerCurrency > 0) {
-        rubPerHourInput.value = Math.round(3600 / s.secondsAddedPerCurrency);
     }
 
     if (typeof s.dynamicPriceStep !== 'undefined') {
@@ -99,10 +97,7 @@ showRubPerHourToggle.addEventListener('change', () =>
 rubPerHourInput.addEventListener('input', () => {
     const rub = parseFloat(rubPerHourInput.value);
     if (!isNaN(rub) && rub > 0) {
-        ipcRenderer.send('settings:set', {
-            baseRubPerHour: rub,
-            secondsAddedPerCurrency: 3600 / rub
-        });
+        ipcRenderer.send('settings:set', {baseRubPerHour: rub});
     }
 });
 
@@ -141,6 +136,10 @@ function setIndicator(system, state) {
 
 ipcRenderer.on('donation:status', (_e, {system, status}) => {
     setIndicator(system, status);
+});
+
+ipcRenderer.invoke('donation:get-statuses').then((statuses) => {
+    for (const [system, status] of Object.entries(statuses || {})) setIndicator(system, status);
 });
 
 const STATUS_COLORS = {ok: '#2ecc71', error: '#e74c3c', warning: '#f1c40f', info: ''};

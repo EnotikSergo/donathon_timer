@@ -2,8 +2,10 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'">
     <title>Timer Control</title>
-    <link rel="stylesheet" href="css/control.css">
+    <link rel="stylesheet" href="control.css">
 </head>
 <body>
 <div class="main-container">
@@ -90,6 +92,6 @@
     </div>
 </div>
 
-<script src="js/control_window.js"></script>
+<script src="control.js"></script>
 </body>
 </html>

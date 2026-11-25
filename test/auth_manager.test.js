@@ -1,6 +1,6 @@
 const {test, beforeEach} = require('node:test');
 const assert = require('node:assert/strict');
-const {createAuthManager} = require('../auth_manager');
+const {createAuthManager} = require('../core/auth_manager');
 
 beforeEach((t) => {
     for (const method of ['log', 'warn', 'error']) t.mock.method(console, method, () => {});

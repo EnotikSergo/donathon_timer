@@ -1,7 +1,4 @@
-const vm = require('vm');
-const fs = require('fs');
 const path = require('path');
-const {createRequire} = require('module');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const START_TIME = 1_700_000_000_000;
@@ -74,79 +71,6 @@ function createClock(start = START_TIME) {
     };
 }
 
-function createIpc(syncReplies = {}) {
-    const handlers = {};
-    const sent = [];
-    return {
-        sent,
-        ipcRenderer: {
-            on: (channel, fn) => {
-                (handlers[channel] = handlers[channel] || []).push(fn);
-            },
-            send: (channel, data) => {
-                sent.push([channel, data === undefined ? undefined : JSON.parse(JSON.stringify(data))]);
-            },
-            sendSync: (channel) => {
-                const reply = syncReplies[channel];
-                return typeof reply === 'function' ? reply() : reply;
-            },
-            invoke: (channel) => {
-                const reply = syncReplies[channel];
-                return Promise.resolve(typeof reply === 'function' ? reply() : reply);
-            }
-        },
-        emit: (channel, data) => {
-            for (const fn of handlers[channel] || []) fn({}, data);
-        },
-        sentOn: (channel) => sent.filter(([c]) => c === channel).map(([, d]) => d)
-    };
-}
-
-function createElement(id = '') {
-    const listeners = {};
-    return {
-        id,
-        style: {},
-        innerText: '',
-        textContent: '',
-        className: '',
-        children: [],
-        removed: false,
-        classList: {add() {}, remove() {}},
-        addEventListener: (type, fn) => {
-            (listeners[type] = listeners[type] || []).push(fn);
-        },
-        dispatch: (type, event = {}) => {
-            for (const fn of listeners[type] || []) fn(event);
-        },
-        appendChild(child) {
-            this.children.push(child);
-        },
-        remove() {
-            this.removed = true;
-        },
-        getBoundingClientRect: () => ({left: 0, top: 0, width: 0, height: 0})
-    };
-}
-
-function createDocument() {
-    const elements = {};
-    const listeners = {};
-    const body = createElement('body');
-    return {
-        elements,
-        body,
-        getElementById: (id) => (elements[id] = elements[id] || createElement(id)),
-        createElement: () => createElement(),
-        addEventListener: (type, fn) => {
-            (listeners[type] = listeners[type] || []).push(fn);
-        },
-        dispatch: (type, event = {}) => {
-            for (const fn of listeners[type] || []) fn(event);
-        }
-    };
-}
-
 class FakeWebSocket {
     constructor(url) {
         this.url = url;
@@ -204,29 +128,11 @@ function createFetch(log) {
     }};
 }
 
-function createStorage(initial = {}) {
-    const data = {...initial};
-    return {
-        data,
-        getItem: (k) => (k in data ? data[k] : null),
-        setItem: (k, v) => {
-            data[k] = String(v);
-        },
-        removeItem: (k) => {
-            delete data[k];
-        }
-    };
-}
-
-function createBrowserEnv(options = {}) {
+function createServiceEnv(options = {}) {
     const clock = createClock(options.start);
-    const ipc = createIpc(options.syncReplies || {});
-    const document = createDocument();
     const fetchLog = [];
     const net = createFetch(fetchLog);
-    const windowListeners = {};
     const sockets = [];
-    const animationFrames = [];
 
     class WS extends FakeWebSocket {
         constructor(url) {
@@ -235,78 +141,25 @@ function createBrowserEnv(options = {}) {
         }
     }
 
-    const realRequire = createRequire(path.join(ROOT, 'index.html'));
-    const fakeRequire = (name) => (name === 'electron' ? {ipcRenderer: ipc.ipcRenderer} : realRequire(name));
-
-    const ctx = {
-        console: options.console || {log() {}, warn() {}, error() {}},
-        ...clock.globals,
-        AbortController,
-        URL,
-        URLSearchParams,
-        Buffer,
-        navigator: {onLine: true},
-        localStorage: createStorage(options.localStorage),
-        ipcRenderer: ipc.ipcRenderer,
-        WebSocket: WS,
-        fetch: net.fetch,
-        document,
-        Audio: class {
-            play() {
-                return Promise.resolve();
-            }
-        },
-        Event: class {
-            constructor(type) {
-                this.type = type;
-            }
-        },
-        CustomEvent: class {
-            constructor(type, init = {}) {
-                this.type = type;
-                this.detail = init.detail;
-            }
-        },
-        requestAnimationFrame: (fn) => {
-            animationFrames.push(fn);
-            return animationFrames.length;
-        },
-        addEventListener: (type, fn) => {
-            (windowListeners[type] = windowListeners[type] || []).push(fn);
-        },
-        dispatchEvent: (event) => {
-            for (const fn of windowListeners[event.type] || []) fn(event);
-            return true;
-        },
-        require: fakeRequire,
-        __dirname: ROOT,
-        process
-    };
-    ctx.window = ctx;
-    vm.createContext(ctx);
-
     return {
-        ctx,
         clock,
-        ipc,
-        document,
-        sockets,
         fetchLog,
+        sockets,
         onFetch: net.setHandler,
-        load(relPath) {
-            const file = path.join(ROOT, relPath);
-            vm.runInContext(fs.readFileSync(file, 'utf8'), ctx, {filename: file});
-        },
-        run: (code) => vm.runInContext(code, ctx),
-        frame() {
-            const fn = animationFrames.shift();
-            if (fn) fn();
-        },
-        key(code, extra = {}) {
-            document.dispatch('keydown', {code, shiftKey: false, ...extra});
-        },
-        statuses: (system) => ipc.sentOn('donation:status').filter((d) => d.system === system).map((d) => d.status)
+        deps: {
+            fetch: net.fetch,
+            WebSocket: WS,
+            timers: {
+                setTimeout: clock.globals.setTimeout,
+                clearTimeout: clock.globals.clearTimeout,
+                setInterval: clock.globals.setInterval,
+                clearInterval: clock.globals.clearInterval
+            },
+            now: () => clock.now(),
+            random: () => 0,
+            log: {log() {}, warn() {}, error() {}}
+        }
     };
 }
 
-module.exports = {ROOT, START_TIME, createClock, createBrowserEnv, FakeWebSocket};
+module.exports = {ROOT, START_TIME, createClock, createServiceEnv, FakeWebSocket};

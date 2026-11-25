@@ -1,7 +1,6 @@
 const crypto = require('crypto');
+const {DA_CLIENT_ID, DA_REDIRECT_PORT} = require('../constants');
 
-const DA_CLIENT_ID = '21868';
-const DA_REDIRECT_PORT = 41701;
 const DA_REDIRECT_URI = `http://localhost:${DA_REDIRECT_PORT}/auth/da`;
 const DA_SCOPES = ['oauth-user-show', 'oauth-donation-subscribe', 'oauth-donation-index'];
 const DA_PROFILE_URL = 'https://www.donationalerts.com/api/v1/user/oauth';
@@ -267,4 +266,4 @@ function createAuthManager(deps) {
     return {getAccounts, init, verify, isAuthPending, startDaLogin, handleDaCallback, saveDxToken, logout, openDxSettings};
 }
 
-module.exports = {createAuthManager, DA_REDIRECT_PORT};
+module.exports = {createAuthManager};

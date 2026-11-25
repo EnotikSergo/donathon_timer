@@ -24,17 +24,6 @@ function mime(file) {
     })[ext] || 'application/octet-stream';
 }
 
-function resolveOverlayDir() {
-    try {
-        if (process.resourcesPath) {
-            const p = path.join(process.resourcesPath, 'overlay');
-            if (fs.existsSync(p)) return p;
-        }
-    } catch {
-    }
-    return path.join(__dirname, 'overlay');
-}
-
 function isLocalRequest(req) {
     if (!LOOPBACK_ADDRESSES.has(req.socket.remoteAddress)) return false;
     if (req.headers['x-forwarded-for'] || req.headers['forwarded'] || req.headers['x-real-ip']) return false;
@@ -65,7 +54,8 @@ function startOverlayServer(opts = {}) {
     const host = opts.host || '127.0.0.1';
     const port = Number(opts.port || 41701);
     const basePath = (opts.basePath || '/overlay').replace(/\/+$/, '');
-    const overlayDir = path.resolve(opts.overlayDir || resolveOverlayDir());
+    const overlayDir = path.resolve(opts.overlayDir);
+    const authPagePath = opts.authPagePath ? path.resolve(opts.authPagePath) : null;
 
     let latestState = {remaining: '00:00:00'};
     const sseClients = new Set();
@@ -154,8 +144,11 @@ function startOverlayServer(opts = {}) {
         }
 
         if (u.pathname === AUTH_PAGE_PATH && (req.method === 'GET' || req.method === 'HEAD')) {
-            const filePath = path.join(__dirname, 'auth_success.html');
-            fs.readFile(filePath, (err, buf) => {
+            if (!authPagePath) {
+                notFound(res);
+                return;
+            }
+            fs.readFile(authPagePath, (err, buf) => {
                 if (err) {
                     notFound(res);
                     return;

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const {writeFileAtomic, readTextFile, removeFile} = require('../js/lib/storage');
+const {writeFileAtomic, readTextFile, removeFile} = require('../core/storage');
 
 function tmpDir() {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'storage-test-'));

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; media-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="fonts/nunito.css">
+    <link rel="stylesheet" href="view.css">
+    <title>NikiWright Timer</title>
+</head>
+<body>
+<div id="container">
+    <div id="textDiv">
+        <div id="sleepMoon">
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+            </svg>
+        </div>
+        <div id="pauseIcon"></div>
+        <p id="timeText">00:00:00</p>
+        <span id="stopwatchText">прошло 0 д 0 ч 0 м 0 с</span>
+    </div>
+    <span id="rubPerHourText"></span>
+    <div id="goalContainer">
+        <span id="goalText">Сбор: 0 / 0 руб</span>
+        <div id="goalBarBg">
+            <div id="goalBarFill"></div>
+        </div>
+    </div>
+</div>
+<script src="view.js"></script>
+</body>
+</html>

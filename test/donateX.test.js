@@ -1,19 +1,18 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {createBrowserEnv, START_TIME} = require('./helpers/fake_env');
+const {createServiceEnv, START_TIME} = require('./helpers/fake_env');
+const {createDonateX} = require('../core/donations/donatex');
 
 const RS = '\x1e';
 const iso = (ms) => new Date(ms).toISOString();
 
 function createDxEnv({token = 'dxtok', lastProcessed = START_TIME - 60000, processedIds, list = [], neg = null, me = null, listResponse = null} = {}) {
-    const localStorage = {dx_last_processed_ts: String(lastProcessed)};
-    if (processedIds) localStorage.dx_processed_ids = JSON.stringify(processedIds);
-    const env = createBrowserEnv({localStorage});
+    const env = createServiceEnv();
     const state = {neg, list: listResponse || {status: 200, json: list}, me};
     const donations = [];
-    env.ctx.donateXToken = token;
-    env.ctx.donationModeEnabled = true;
-    env.ctx.handleDonationWithGoalSystem = (amount) => donations.push(amount);
+    const statuses = [];
+    const ctx = {token, donationModeEnabled: true, authInvalid: 0};
+    const stored = {data: {lastProcessedTimestamp: lastProcessed, processedIds: processedIds || []}};
     env.onFetch(async (url) => {
         if (url.includes('/public-donations-hub/negotiate')) {
             return state.neg || {status: 200, json: {connectionToken: 'ctok', availableTransports: [{transport: 'WebSockets'}]}};
@@ -22,14 +21,31 @@ function createDxEnv({token = 'dxtok', lastProcessed = START_TIME - 60000, proce
         if (url.includes('/v1/user/me')) return state.me || {status: 200, json: {username: 'x'}};
         return {status: 404};
     });
-    env.load('js/api/donateX.js');
+    const service = createDonateX({
+        ...env.deps,
+        getToken: () => ctx.token,
+        isDonationModeEnabled: () => ctx.donationModeEnabled,
+        onDonation: (amount) => donations.push(amount),
+        onStatus: (status) => statuses.push(status),
+        onAuthInvalid: () => ctx.authInvalid++,
+        state: {
+            load: () => JSON.parse(JSON.stringify(stored.data)),
+            save: (data) => {
+                stored.data = JSON.parse(JSON.stringify(data));
+            }
+        }
+    });
+    service.start();
 
     const dx = {
         env,
+        ctx,
+        service,
+        stored,
         state,
         donations,
         ws: () => env.sockets.at(-1),
-        statuses: () => env.statuses('DX'),
+        statuses: () => statuses,
         calls: (part) => env.fetchLog.filter((r) => r.url.includes(part)).length,
         async handshake() {
             await env.clock.flush();
@@ -108,8 +124,9 @@ test('обработанные id сохраняются и учитываютс
     const dx = await connectedDx();
     dx.invoke('DonationCreated', {id: 'p1', timestamp: iso(START_TIME), amountInRub: 10});
     await dx.env.clock.flush();
-    const saved = JSON.parse(dx.env.ctx.localStorage.getItem('dx_processed_ids'));
+    const saved = dx.stored.data.processedIds;
     assert.deepEqual(saved, ['p1']);
+    assert.equal(dx.stored.data.lastProcessedTimestamp, START_TIME);
 
     const dx2 = await connectedDx({processedIds: saved});
     dx2.invoke('DonationRerun', {id: 'p1', timestamp: iso(START_TIME), amountInRub: 10});
@@ -119,9 +136,9 @@ test('обработанные id сохраняются и учитываютс
 
 test('донат при выключенном донат-режиме не засчитывается ни сейчас, ни позже', async () => {
     const dx = await connectedDx();
-    dx.env.ctx.donationModeEnabled = false;
+    dx.ctx.donationModeEnabled = false;
     dx.invoke('DonationCreated', {id: 'off', timestamp: iso(START_TIME), amountInRub: 10});
-    dx.env.ctx.donationModeEnabled = true;
+    dx.ctx.donationModeEnabled = true;
     dx.invoke('DonationRerun', {id: 'off', timestamp: iso(START_TIME), amountInRub: 10});
     await dx.env.clock.flush();
     assert.deepEqual(dx.donations, []);
@@ -191,7 +208,7 @@ test('токен отозван во время опроса → опрос ос
     await dx.env.clock.advance(120000);
     assert.equal(dx.env.fetchLog.length, n);
     assert.equal(dx.statuses().at(-1), 'error');
-    assert.deepEqual(dx.env.ipc.sentOn('auth:invalid'), ['donateX']);
+    assert.equal(dx.ctx.authInvalid, 1);
 });
 
 test('неверный токен при запуске → без бесконечных попыток', async () => {
@@ -201,21 +218,21 @@ test('неверный токен при запуске → без бескон�
     await dx.env.clock.advance(120000);
     assert.equal(dx.env.fetchLog.length, n);
     assert.equal(dx.statuses().at(-1), 'error');
-    assert.deepEqual(dx.env.ipc.sentOn('auth:invalid'), ['donateX']);
+    assert.equal(dx.ctx.authInvalid, 1);
 });
 
 test('restart: новый токен подключает заново, пустой — отключает', async () => {
     const dx = createDxEnv({neg: {status: 401}, me: {status: 401}});
     await dx.env.clock.advance(100);
     dx.state.neg = null;
-    dx.env.ctx.donateXToken = 'new';
-    dx.env.ctx.donationServices.DX.restart();
+    dx.ctx.token = 'new';
+    dx.service.restart();
     await dx.handshake();
     assert.equal(dx.statuses().at(-1), 'connected');
     assert.match(dx.ws().url, /access_token=new/);
 
-    dx.env.ctx.donateXToken = '';
-    dx.env.ctx.donationServices.DX.restart();
+    dx.ctx.token = '';
+    dx.service.restart();
     await dx.env.clock.flush();
     assert.equal(dx.statuses().at(-1), 'disconnected');
 });

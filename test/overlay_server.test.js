@@ -2,7 +2,12 @@ const {test, after, beforeEach} = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('http');
 const net = require('net');
-const {startOverlayServer} = require('../overlay_server');
+const path = require('path');
+const {startOverlayServer} = require('../core/overlay_server');
+
+const ROOT = path.resolve(__dirname, '..');
+const VIEW_DIR = path.join(ROOT, 'view');
+const AUTH_PAGE = path.join(ROOT, 'auth', 'auth_success.html');
 
 function freePort() {
     return new Promise((resolve) => {
@@ -47,6 +52,8 @@ async function start(opts = {}) {
         port,
         host: '127.0.0.1',
         basePath: '/overlay',
+        overlayDir: VIEW_DIR,
+        authPagePath: AUTH_PAGE,
         isAuthPending: () => ctx.pending,
         onAuthCallback: async (service, payload) => {
             callbacks.push([service, payload]);
@@ -77,6 +84,7 @@ test('оверлей: страница, состояние, шрифт; /overlay
     assert.equal(page.status, 200);
     assert.match(page.headers['content-type'], /text\/html/);
     assert.match(page.body, /fonts\/nunito\.css/);
+    assert.match(page.body, /view\.js/);
     assert.doesNotMatch(page.body, /fonts\.googleapis/);
 
     const state = await request(port, '/overlay/state');
@@ -93,9 +101,9 @@ test('оверлей: страница, состояние, шрифт; /overlay
 
 test('оверлей: выход за папку оверлея запрещён', async () => {
     const {port} = await start();
-    assert.equal((await request(port, '/overlay/..%2Foverlay_server.js')).status, 403);
+    assert.equal((await request(port, '/overlay/..%2Fmain.js')).status, 403);
     assert.equal((await request(port, '/overlay/..%2F..%2Fpackage.json')).status, 403);
-    assert.equal((await request(port, '/overlay_server.js')).status, 404);
+    assert.equal((await request(port, '/main.js')).status, 404);
 });
 
 test('оверлей: только чтение', async () => {
@@ -183,7 +191,7 @@ test('авторизация: через туннель (CloudPub) и с чуж�
 test('сервер закрывается и освобождает порт', async () => {
     const ctx = await start();
     await ctx.server.close();
-    const again = startOverlayServer({port: ctx.port, host: '127.0.0.1'});
+    const again = startOverlayServer({port: ctx.port, host: '127.0.0.1', overlayDir: VIEW_DIR});
     servers.push(again);
     await new Promise((r) => setTimeout(r, 50));
     assert.equal((await request(ctx.port, '/overlay/state')).status, 200);

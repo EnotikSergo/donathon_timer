@@ -2,7 +2,7 @@
   "name": "donathon-countdown",
   "version": "1.0.0",
   "description": "donathon-countdown",
-  "main": "renderer.js",
+  "main": "main.js",
   "scripts": {
     "start": "electron .",
     "start:forge": "electron-forge start",
