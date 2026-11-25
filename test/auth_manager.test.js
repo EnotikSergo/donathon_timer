@@ -13,7 +13,7 @@ function setup({port = 41701, da = {status: 200, json: {data: {name: 'StreamerDA
         opened: [],
         calls: [],
         tokensChanged: 0,
-        api: {da, dx}
+        api: {da, dx, boosty: {status: 200, json: {data: []}}}
     };
     ctx.manager = createAuthManager({
         tokens: {
@@ -33,7 +33,7 @@ function setup({port = 41701, da = {status: 200, json: {data: {name: 'StreamerDA
         },
         httpGetJson: async (url, headers) => {
             ctx.calls.push([url, headers]);
-            const r = url.includes('donationalerts') ? ctx.api.da : ctx.api.dx;
+            const r = url.includes('donationalerts') ? ctx.api.da : url.includes('api.boosty.to') ? ctx.api.boosty : ctx.api.dx;
             if (r === 'offline') throw new Error('offline');
             return r;
         },
@@ -179,4 +179,58 @@ test('выход удаляет токен и данные аккаунта; п�
 
     assert.equal((await ctx.manager.logout('trula')).ok, false);
     assert.equal(ctx.tokensChanged, changed + 2);
+});
+
+const BOOSTY_COOKIE = `auth=${encodeURIComponent(JSON.stringify({accessToken: 'acc', refreshToken: 'ref', expiresAt: Date.now() + 3600 * 1000}))}; _clientId=dev`;
+
+test('Boosty: без блога, без токена, без _clientId — не сохраняется', async () => {
+    const ctx = setup();
+    assert.match((await ctx.manager.saveBoostyToken(BOOSTY_COOKIE, '')).error, /блог/i);
+    assert.match((await ctx.manager.saveBoostyToken('мусор', 'niki')).error, /Cookie/);
+    const noDevice = `auth=${encodeURIComponent(JSON.stringify({accessToken: 'a', refreshToken: 'r'}))}`;
+    assert.match((await ctx.manager.saveBoostyToken(noDevice, 'niki')).error, /_clientId/);
+    assert.equal(ctx.store.boosty, undefined);
+    assert.equal(ctx.calls.length, 0);
+});
+
+test('Boosty: проверка по статистике блога — 401, 403, 404 отклоняются', async () => {
+    const ctx = setup();
+    for (const [status, re] of [[401, /не принял/], [403, /Нет доступа/], [404, /не найден/]]) {
+        ctx.api.boosty = {status};
+        assert.match((await ctx.manager.saveBoostyToken(BOOSTY_COOKIE, 'https://boosty.to/niki')).error, re);
+    }
+    assert.equal(ctx.store.boosty, undefined);
+    assert.match(ctx.calls.at(-1)[0], /^https:\/\/api\.boosty\.to\/v1\/blog\/stat\/niki\/events\?/);
+    assert.deepEqual(ctx.calls.at(-1)[1], {Authorization: 'Bearer acc'});
+});
+
+test('Boosty: верный токен сохраняется вместе с блогом, статус берётся из опроса', async () => {
+    const ctx = setup();
+    assert.deepEqual(await ctx.manager.saveBoostyToken(BOOSTY_COOKIE, 'boosty.to/niki'), {ok: true});
+    const stored = JSON.parse(ctx.store.boosty);
+    assert.equal(stored.blog, 'niki');
+    assert.equal(stored.deviceId, 'dev');
+    assert.equal(ctx.tokensChanged, 1);
+    assert.equal(ctx.manager.getAccounts().boosty.status, 'checking');
+    assert.equal(ctx.manager.getAccounts().boosty.name, 'niki');
+
+    ctx.manager.reportServiceStatus('boosty', 'connected');
+    assert.equal(ctx.manager.getAccounts().boosty.status, 'ok');
+    ctx.manager.reportServiceStatus('boosty', 'error');
+    assert.equal(ctx.manager.getAccounts().boosty.status, 'unverified');
+    ctx.manager.reportServiceStatus('boosty', 'auth');
+    assert.equal(ctx.manager.getAccounts().boosty.status, 'invalid');
+    ctx.manager.reportServiceStatus('boosty', 'error');
+    assert.equal(ctx.manager.getAccounts().boosty.status, 'invalid');
+
+    assert.equal((await ctx.manager.logout('boosty')).ok, true);
+    assert.equal(ctx.store.boosty, undefined);
+    assert.equal(ctx.manager.getAccounts().boosty.status, 'none');
+});
+
+test('Boosty: просроченный токен сохраняется без проверки (обновит модуль опроса)', async () => {
+    const ctx = setup();
+    const expired = `auth=${encodeURIComponent(JSON.stringify({accessToken: 'a', refreshToken: 'r', expiresAt: 1000}))}; _clientId=d`;
+    assert.deepEqual(await ctx.manager.saveBoostyToken(expired, 'niki'), {ok: true});
+    assert.equal(ctx.calls.length, 0);
 });

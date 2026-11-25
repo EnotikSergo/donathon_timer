@@ -1,4 +1,4 @@
-const {app, BrowserWindow, ipcMain, shell, safeStorage, net} = require('electron');
+const {app, BrowserWindow, ipcMain, shell, safeStorage, net, session} = require('electron');
 const fs = require('fs');
 const path = require('path');
 const C = require('./constants');
@@ -10,6 +10,9 @@ const {createAuthManager} = require('./core/auth_manager');
 const {createTimerCore} = require('./core/timer_core');
 const {createDonationAlerts} = require('./core/donations/donation_alerts');
 const {createDonateX} = require('./core/donations/donatex');
+const {createBoosty} = require('./core/donations/boosty');
+const {normalizeBlog} = require('./core/donations/boosty_auth');
+const {createBoostyLogin} = require('./core/boosty_login');
 const {startOverlayServer} = require('./core/overlay_server');
 
 const isSquirrelEvent = handleSquirrelEvent(app);
@@ -20,7 +23,7 @@ if (!isSquirrelEvent && !hasInstanceLock) app.quit();
 
 const OVERLAY_PORT = Number(process.env.OVERLAY_PORT || C.OVERLAY_PORT);
 const CONTROL_SETTINGS = ['donationModeEnabled', 'sleepModeEnabled', 'showRubPerHour', 'dynamicPriceIncreaseEnabled',
-    'baseRubPerHour', 'dynamicPriceStep', 'lanAccessEnabled'];
+    'baseRubPerHour', 'dynamicPriceStep'];
 const TIMER_COMMANDS = new Set(['addSmall', 'addLarge', 'subtractSmall', 'subtractLarge', 'togglePause', 'reset']);
 
 const savesDir = path.join(app.getPath('userData'), 'saves');
@@ -32,6 +35,7 @@ const paths = {
     timer: path.join(savesDir, 'timer_value.txt'),
     stopwatch: path.join(savesDir, 'stopwatch_save.txt'),
     donatexState: path.join(savesDir, 'donatex_state.json'),
+    boostyState: path.join(savesDir, 'boosty_state.json'),
     migration: path.join(savesDir, 'migration.json')
 };
 
@@ -118,8 +122,6 @@ function httpGetJson(url, headers = {}, timeoutMs = 8000) {
 let timerWin = null;
 let controlWin = null;
 let overlay = null;
-let overlayHost = null;
-let overlayRestart = Promise.resolve();
 let servicesStarted = false;
 
 const sendTo = (win, channel, data) => {
@@ -135,7 +137,7 @@ const tokenStore = createTokenStore({
 });
 
 let tokens = {};
-const donationStatuses = {DA: 'disconnected', DX: 'disconnected'};
+const donationStatuses = {DA: 'disconnected', DX: 'disconnected', BY: 'disconnected'};
 
 const timerCore = createTimerCore({
     settings: settingsStore,
@@ -188,7 +190,41 @@ const donateX = createDonateX({
     }
 });
 
-const services = {donationAlerts, donateX};
+const boosty = createBoosty({
+    ...donationHandlers,
+    getCredentials: () => tokens.boosty || '',
+    saveCredentials: async (serialized) => {
+        tokens = {...tokens, boosty: serialized};
+        await tokenStore.update('boosty', serialized);
+        sendTo(controlWin, 'auth-tokens:changed', tokens);
+    },
+    onStatus: (status) => {
+        makeStatusHandler('BY')(status);
+        authManager.reportServiceStatus('boosty', status);
+    },
+    onAuthInvalid: () => authManager.reportServiceStatus('boosty', 'auth'),
+    state: {
+        load: () => readJson(paths.boostyState, null),
+        save: (data) => writeJson(paths.boostyState, data)
+    }
+});
+
+const services = {donationAlerts, donateX, boosty};
+
+const boostyLogin = createBoostyLogin({
+    BrowserWindow,
+    session,
+    getParent: () => (controlWin && !controlWin.isDestroyed() ? controlWin : null),
+    userAgent: app.userAgentFallback
+});
+
+async function loginToBoosty(blogRaw) {
+    const blog = normalizeBlog(blogRaw);
+    if (!blog) return {ok: false, error: 'Сначала укажите блог: адрес вида boosty.to/имя или просто имя.'};
+    const cookieHeader = await boostyLogin.open();
+    if (!cookieHeader) return {ok: false, error: 'Окно входа закрыто до завершения входа.'};
+    return authManager.saveBoostyToken(cookieHeader, blog);
+}
 
 async function refreshTokens() {
     const previous = tokens;
@@ -216,35 +252,22 @@ const authManager = createAuthManager({
     onTokensChanged: refreshTokens
 });
 
-settingsStore.onChange((settings, changed) => {
+settingsStore.onChange((settings) => {
     sendTo(controlWin, 'settings:update', settings);
-    if (changed.includes('lanAccessEnabled')) applyOverlayHost();
 });
 
-function applyOverlayHost() {
-    const host = settingsStore.get().lanAccessEnabled ? '0.0.0.0' : '127.0.0.1';
-    if (overlay && overlayHost === host) return overlayRestart;
-
-    overlayRestart = overlayRestart.then(async () => {
-        if (overlay && overlayHost === host) return;
-        if (overlay) {
-            const old = overlay;
-            overlay = null;
-            await old.close();
-        }
-        overlayHost = host;
-        overlay = startOverlayServer({
-            port: OVERLAY_PORT,
-            host,
-            basePath: C.OVERLAY_BASE_PATH,
-            overlayDir: path.join(__dirname, 'view'),
-            authPagePath: path.join(__dirname, 'auth', 'auth_success.html'),
-            isAuthPending: (service) => authManager.isAuthPending(service),
-            onAuthCallback: (_service, payload) => authManager.handleDaCallback(payload)
-        });
-        overlay.push(timerCore.getSnapshot());
-    }).catch((e) => console.error('[overlay] Не удалось перезапустить сервер:', e));
-    return overlayRestart;
+function startOverlay() {
+    if (overlay) return;
+    overlay = startOverlayServer({
+        port: OVERLAY_PORT,
+        host: '0.0.0.0',
+        basePath: C.OVERLAY_BASE_PATH,
+        overlayDir: path.join(__dirname, 'view'),
+        authPagePath: path.join(__dirname, 'auth', 'auth_success.html'),
+        isAuthPending: (service) => authManager.isAuthPending(service),
+        onAuthCallback: (_service, payload) => authManager.handleDaCallback(payload)
+    });
+    overlay.push(timerCore.getSnapshot());
 }
 
 const LEGACY_STORAGE_SCRIPT = `(() => {
@@ -312,6 +335,7 @@ function startServices() {
     servicesStarted = true;
     donationAlerts.start();
     donateX.start();
+    boosty.start();
 }
 
 const SECURE_WEB_PREFERENCES = {
@@ -408,6 +432,8 @@ function registerIpcHandlers() {
     handle('accounts:get', () => authManager.getAccounts());
     handle('auth:da-login', () => authManager.startDaLogin());
     handle('auth:dx-save', (token) => authManager.saveDxToken(token));
+    handle('auth:boosty-save', (data) => authManager.saveBoostyToken(data && data.token, data && data.blog));
+    handle('auth:boosty-login', (blog) => loginToBoosty(blog));
     handle('auth:logout', (service) => authManager.logout(service));
     on('auth:dx-open-settings', () => authManager.openDxSettings());
 }
@@ -415,7 +441,8 @@ function registerIpcHandlers() {
 app.on('web-contents-created', (_event, contents) => {
     contents.setWindowOpenHandler(() => ({action: 'deny'}));
     contents.on('will-navigate', (event, url) => {
-        if (!url.startsWith('file://')) event.preventDefault();
+        const allowed = boostyLogin.isLoginContents(contents) ? url.startsWith('https://') : url.startsWith('file://');
+        if (!allowed) event.preventDefault();
     });
 });
 
@@ -432,7 +459,7 @@ app.whenReady().then(async () => {
     await tokenStore.upgradeEncryption();
     tokens = await tokenStore.read();
     timerCore.start();
-    applyOverlayHost();
+    startOverlay();
     createWindows();
     authManager.init();
 });
@@ -450,6 +477,7 @@ app.on('before-quit', () => {
     settingsStore.flush();
     donationAlerts.stop();
     donateX.stop();
+    boosty.stop();
     if (overlay) overlay.close();
 });
 

@@ -1,5 +1,12 @@
 const crypto = require('crypto');
 const {DA_CLIENT_ID, DA_REDIRECT_PORT} = require('../constants');
+const {
+    API_URL: BOOSTY_API_URL,
+    parseBoostyCredentials,
+    normalizeBlog,
+    serializeCredentials,
+    deserializeCredentials
+} = require('./donations/boosty_auth');
 
 const DA_REDIRECT_URI = `http://localhost:${DA_REDIRECT_PORT}/auth/da`;
 const DA_SCOPES = ['oauth-user-show', 'oauth-donation-subscribe', 'oauth-donation-index'];
@@ -22,12 +29,13 @@ function createAuthManager(deps) {
 
     const accounts = {
         donationAlerts: {status: 'none', name: '', message: '', warning: '', loginPending: false},
-        donateX: {status: 'none', name: '', message: '', warning: ''}
+        donateX: {status: 'none', name: '', message: '', warning: ''},
+        boosty: {status: 'none', name: '', message: '', warning: ''}
     };
 
     let pendingLogin = null;
     let pendingTimer = null;
-    const checkSeq = {donationAlerts: 0, donateX: 0};
+    const checkSeq = {donationAlerts: 0, donateX: 0, boosty: 0};
 
     function emit() {
         try {
@@ -66,6 +74,16 @@ function createAuthManager(deps) {
 
         if (!token) {
             setAccount(service, {status: 'none', name: '', message: '', warning: ''});
+            return;
+        }
+
+        if (service === 'boosty') {
+            const creds = deserializeCredentials(token);
+            if (!creds) {
+                setAccount('boosty', {status: 'invalid', name: '', message: 'Сохранённый токен Boosty повреждён. Вставьте новый.', warning: ''});
+            } else if (accounts.boosty.status === 'none' || accounts.boosty.name !== creds.blog) {
+                setAccount('boosty', {status: 'checking', name: creds.blog, message: '', warning: ''});
+            }
             return;
         }
 
@@ -234,6 +252,55 @@ function createAuthManager(deps) {
         return {ok: true};
     }
 
+    async function saveBoostyToken(rawToken, rawBlog) {
+        const blog = normalizeBlog(rawBlog);
+        if (!blog) return {ok: false, error: 'Укажите блог: адрес вида boosty.to/имя или просто имя.'};
+        if (String(rawToken || '').length > MAX_TOKEN_LENGTH * 4) return {ok: false, error: 'Слишком длинный текст.'};
+        const creds = parseBoostyCredentials(rawToken);
+        if (!creds) return {ok: false, error: 'Не удалось найти токен. Скопируйте значение Cookie целиком (там должны быть auth и _clientId).'};
+        if (!creds.deviceId) return {ok: false, error: 'В скопированном нет _clientId. Скопируйте значение Cookie целиком.'};
+        creds.blog = blog;
+
+        const expired = creds.expiresAt && creds.expiresAt <= Date.now();
+        if (!expired) {
+            let result;
+            try {
+                const nowSec = Math.floor(Date.now() / 1000);
+                result = await httpGetJson(
+                    `${BOOSTY_API_URL}/v1/blog/stat/${encodeURIComponent(blog)}/events?from=${nowSec - 60}&to=${nowSec}&limit=1`,
+                    {'Authorization': `Bearer ${creds.accessToken}`}
+                );
+            } catch (e) {
+                result = {status: 0};
+            }
+            if (result.status === 401) return {ok: false, error: 'Boosty не принял токен. Нажмите «Запросить токен» и войдите заново.'};
+            if (result.status === 403) return {ok: false, error: `Нет доступа к статистике блога «${blog}». Укажите свой блог.`};
+            if (result.status === 404) return {ok: false, error: `Блог «${blog}» не найден.`};
+        }
+
+        try {
+            await tokens.update('boosty', serializeCredentials(creds));
+        } catch (e) {
+            console.error('[auth] Не удалось сохранить токен Boosty:', e);
+            return {ok: false, error: 'Не удалось сохранить токен.'};
+        }
+        checkSeq.boosty++;
+        setAccount('boosty', {status: 'checking', name: blog, message: '', warning: ''});
+        onTokensChanged();
+        return {ok: true};
+    }
+
+    function reportServiceStatus(service, status) {
+        if (service !== 'boosty' || accounts.boosty.status === 'none') return;
+        if (status === 'connected') {
+            setAccount('boosty', {status: 'ok', message: '', warning: ''});
+        } else if (status === 'auth') {
+            setAccount('boosty', {status: 'invalid', message: 'Boosty не принял токен. Нажмите «Запросить токен» и войдите заново.', warning: ''});
+        } else if (status === 'error' && accounts.boosty.status !== 'invalid') {
+            setAccount('boosty', {status: 'unverified', message: 'Нет связи с Boosty, повторная попытка скоро.', warning: ''});
+        }
+    }
+
     async function logout(service) {
         if (!accounts[service]) return {ok: false, error: 'Неизвестный сервис.'};
         if (!(await tokens.read())[service]) return {ok: false, error: 'Токен не сохранён.'};
@@ -262,9 +329,13 @@ function createAuthManager(deps) {
     function init() {
         verify('donationAlerts');
         verify('donateX');
+        verify('boosty');
     }
 
-    return {getAccounts, init, verify, isAuthPending, startDaLogin, handleDaCallback, saveDxToken, logout, openDxSettings};
+    return {
+        getAccounts, init, verify, isAuthPending, startDaLogin, handleDaCallback,
+        saveDxToken, saveBoostyToken, reportServiceStatus, logout, openDxSettings
+    };
 }
 
 module.exports = {createAuthManager};

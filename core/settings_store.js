@@ -9,7 +9,6 @@ const DEFAULT_SETTINGS = Object.freeze({
     maxTimerTier: 0,
     baseRubPerHour: DEFAULT_RUB_PER_HOUR,
     dynamicPriceStep: 500,
-    lanAccessEnabled: false,
     rubLabel: null
 });
 

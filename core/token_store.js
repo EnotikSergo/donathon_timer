@@ -1,7 +1,7 @@
 const fs = require('fs');
 const {writeFileAtomic, readTextFile} = require('./storage');
 
-const AUTH_SERVICES = ['donationAlerts', 'donateX'];
+const AUTH_SERVICES = ['donationAlerts', 'donateX', 'boosty'];
 
 function pickKnownTokens(obj) {
     const result = {};

@@ -147,7 +147,8 @@ input::-webkit-inner-spin-button {
 }
 
 .token-auth-panel select,
-.token-auth-panel input[type="password"] {
+.token-auth-panel input[type="password"],
+.token-auth-panel input[type="text"] {
     background: rgba(255, 255, 255, .08);
     border: 1px solid rgba(255, 255, 255, .18);
     border-radius: 6px;
@@ -161,7 +162,8 @@ input::-webkit-inner-spin-button {
 }
 
 .token-auth-panel select:focus,
-.token-auth-panel input[type="password"]:focus {
+.token-auth-panel input[type="password"]:focus,
+.token-auth-panel input[type="text"]:focus {
     border-color: #4facfe;
 }
 
@@ -226,4 +228,8 @@ input::-webkit-inner-spin-button {
 }
 .token-status.error {
     color: #e74c3c;
+}
+
+.cp-row[hidden] {
+    display: none;
 }

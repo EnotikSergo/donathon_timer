@@ -256,6 +256,8 @@ test('окна создаются в безопасном режиме с preloa
     assert.match(main.windows[0].file, /view[\\/]index\.html$/);
     assert.match(main.windows[1].file, /control[\\/]control\.html$/);
     assert.match(main.overlay.started[0].overlayDir, /[\\/]view$/);
+    assert.equal(main.overlay.started[0].host, '0.0.0.0');
+    assert.equal(main.overlay.started.length, 1);
     assert.match(main.overlay.started[0].authPagePath, /auth[\\/]auth_success\.html$/);
     main.unload();
 }));
@@ -314,7 +316,7 @@ test('настройки: значения по умолчанию', () => withA
     assert.equal(s.dynamicPriceIncreaseEnabled, false);
     assert.equal(s.baseRubPerHour, 1000);
     assert.equal(s.dynamicPriceStep, 500);
-    assert.equal(s.lanAccessEnabled, false);
+    assert.equal('lanAccessEnabled' in s, false);
     assert.equal((await main.invoke('timer:get-state')).rublesPerHour, 1000);
     main.unload();
 }));
@@ -448,6 +450,23 @@ test('сервисы донатов запускаются после загру
     const statuses = await main.invoke('donation:get-statuses');
     assert.equal(statuses.DA, 'error');
     assert.equal(statuses.DX, 'disconnected');
+    main.unload();
+}));
+
+test('Boosty: модуль запускается, отказ токена виден в индикаторе и статусе аккаунта', () => withApp({saves: {
+    'migration.json': '{"localStorageMigrated":true}',
+    'auth_tokens.json': JSON.stringify({boosty: JSON.stringify({accessToken: 'a', refreshToken: 'r', expiresAt: 0, deviceId: 'd', blog: 'niki'})})
+}}, async (appCtx) => {
+    const main = launch(appCtx);
+    await main.ready();
+    assert.equal((await main.invoke('accounts:get')).boosty.status, 'checking');
+    assert.equal(typeof main.handlers['auth:boosty-save'], 'function');
+    assert.match((await main.invoke('auth:boosty-login', '')).error, /укажите блог/i);
+    await main.loadWindows();
+    await new Promise((r) => setTimeout(r, 50));
+    assert.ok(main.fetchCalls.some((u) => u.startsWith('https://api.boosty.to/v1/blog/niki/subscription_level/')));
+    assert.equal((await main.invoke('donation:get-statuses')).BY, 'error');
+    assert.equal((await main.invoke('accounts:get')).boosty.status, 'invalid');
     main.unload();
 }));
 

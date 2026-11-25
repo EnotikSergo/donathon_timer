@@ -6,12 +6,13 @@ const donationToggle = document.getElementById('donationModeToggle');
 const showRubPerHourToggle = document.getElementById('showRubPerHourToggle');
 const rubPerHourInput = document.getElementById('rubPerHourInput');
 const dynamicPriceToggle = document.getElementById('dynamicPriceToggle');
-const lanAccessToggle = document.getElementById('lanAccessToggle');
 const goalHoursInput = document.getElementById('goalHoursInput');
 const goalToggleBtn = document.getElementById('goalToggleBtn');
 const dynamicPriceStepInput = document.getElementById('dynamicPriceStepInput');
 const serviceSelect = document.getElementById('serviceSelect');
 const tokenInput = document.getElementById('tokenInput');
+const boostyBlogRow = document.getElementById('boostyBlogRow');
+const boostyBlogInput = document.getElementById('boostyBlogInput');
 const requestTokenBtn = document.getElementById('requestTokenBtn');
 const applyTokenBtn = document.getElementById('applyTokenBtn');
 const logoutBtn = document.getElementById('logoutBtn');
@@ -45,7 +46,8 @@ ipcRenderer.on('goal:status', (_e, active) => {
 
 const indicators = {
     DA: document.getElementById('status-da'),
-    DX: document.getElementById('status-dx')
+    DX: document.getElementById('status-dx'),
+    BY: document.getElementById('status-by')
 };
 
 toggleBtn.addEventListener('click', () => {
@@ -74,9 +76,6 @@ function apply(s) {
 
     if (typeof s.dynamicPriceIncreaseEnabled !== 'undefined')
         dynamicPriceToggle.checked = !!s.dynamicPriceIncreaseEnabled;
-
-    if (typeof s.lanAccessEnabled !== 'undefined')
-        lanAccessToggle.checked = !!s.lanAccessEnabled;
 }
 
 ipcRenderer.invoke('settings:get').then(apply);
@@ -110,10 +109,6 @@ dynamicPriceStepInput.addEventListener('input', () => {
 
 dynamicPriceToggle.addEventListener('change', () =>
     ipcRenderer.send('settings:set', {dynamicPriceIncreaseEnabled: dynamicPriceToggle.checked})
-);
-
-lanAccessToggle.addEventListener('change', () =>
-    ipcRenderer.send('settings:set', {lanAccessEnabled: lanAccessToggle.checked})
 );
 
 function setIndicator(system, state) {
@@ -190,7 +185,20 @@ function setLocalStatus(text, kind) {
     renderTokenStatus();
 }
 
-const SERVICE_NAMES = {donationAlerts: 'DonationAlerts', donateX: 'DonateX'};
+const SERVICE_NAMES = {donationAlerts: 'DonationAlerts', donateX: 'DonateX', boosty: 'Boosty'};
+const TOKEN_PLACEHOLDERS = {
+    donationAlerts: 'Вставьте токен сюда',
+    donateX: 'Вставьте токен сюда',
+    boosty: 'Значение Cookie с boosty.to'
+};
+
+function storedBoostyBlog() {
+    try {
+        return JSON.parse(authTokens.boosty || '{}').blog || '';
+    } catch (e) {
+        return '';
+    }
+}
 
 function updateLogoutButton() {
     const service = serviceSelect.value;
@@ -200,7 +208,11 @@ function updateLogoutButton() {
 
 function fillTokenField() {
     if (!serviceSelect || !tokenInput) return;
-    tokenInput.value = authTokens[serviceSelect.value] || '';
+    const service = serviceSelect.value;
+    tokenInput.value = authTokens[service] || '';
+    tokenInput.placeholder = TOKEN_PLACEHOLDERS[service] || '';
+    boostyBlogRow.hidden = service !== 'boosty';
+    if (service === 'boosty' && authTokens.boosty) boostyBlogInput.value = storedBoostyBlog();
     localStatus = null;
     renderTokenStatus();
     updateLogoutButton();
@@ -226,6 +238,19 @@ requestTokenBtn.addEventListener('click', async () => {
         } else {
             setLocalStatus((result && result.error) || 'Не удалось начать вход', 'error');
         }
+    } else if (serviceSelect.value === 'boosty') {
+        if (!boostyBlogInput.value.trim()) {
+            setLocalStatus('Сначала укажите блог Boosty', 'error');
+            return;
+        }
+        requestTokenBtn.disabled = true;
+        setLocalStatus('Войдите в Boosty в открывшемся окне. Оно закроется само после входа', 'warning');
+        try {
+            const result = await ipcRenderer.invoke('auth:boosty-login', boostyBlogInput.value.trim());
+            setLocalStatus(result && result.ok ? '' : ((result && result.error) || 'Не удалось войти в Boosty'), result && result.ok ? 'info' : 'error');
+        } finally {
+            requestTokenBtn.disabled = false;
+        }
     } else {
         ipcRenderer.send('auth:dx-open-settings');
         setLocalStatus('Открыта страница сервиса. Токен: Настройки → API и доступ', 'info');
@@ -246,12 +271,19 @@ applyTokenBtn.addEventListener('click', async () => {
         return;
     }
 
+    if (service === 'boosty' && !boostyBlogInput.value.trim()) {
+        setLocalStatus('Укажите блог Boosty', 'error');
+        return;
+    }
+
     applyTokenBtn.disabled = true;
     setLocalStatus('Проверка токена…', 'info');
     try {
-        const result = await ipcRenderer.invoke('auth:dx-save', token);
+        const result = service === 'boosty'
+            ? await ipcRenderer.invoke('auth:boosty-save', {token, blog: boostyBlogInput.value.trim()})
+            : await ipcRenderer.invoke('auth:dx-save', token);
         if (result && result.ok) {
-            authTokens[service] = token;
+            if (service !== 'boosty') authTokens[service] = token;
             setLocalStatus('');
         } else {
             setLocalStatus((result && result.error) || 'Ошибка сохранения', 'error');
@@ -294,6 +326,7 @@ ipcRenderer.on('auth-tokens:changed', (_e, tokens) => {
     const service = serviceSelect.value;
     if ((previous[service] || '') !== (authTokens[service] || '')) {
         tokenInput.value = authTokens[service] || '';
+        if (service === 'boosty' && authTokens.boosty) boostyBlogInput.value = storedBoostyBlog();
     }
     if (service === 'donationAlerts' && authTokens.donationAlerts && previous.donationAlerts !== authTokens.donationAlerts) {
         localStatus = null;
