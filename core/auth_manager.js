@@ -59,9 +59,10 @@ function createAuthManager(deps) {
     }
 
     async function verify(service) {
-        const all = tokens.read();
-        const token = all[service];
         const seq = ++checkSeq[service];
+        const all = await tokens.read();
+        if (seq !== checkSeq[service]) return;
+        const token = all[service];
 
         if (!token) {
             setAccount(service, {status: 'none', name: '', message: '', warning: ''});
@@ -180,7 +181,7 @@ function createAuthManager(deps) {
         const expiresIn = Number(payload.expires_in);
         const now = Date.now();
         try {
-            tokens.update('donationAlerts', token);
+            await tokens.update('donationAlerts', token);
             const allMeta = meta.read();
             allMeta.donationAlerts = {
                 obtainedAt: now,
@@ -217,7 +218,7 @@ function createAuthManager(deps) {
         }
 
         try {
-            tokens.update('donateX', token);
+            await tokens.update('donateX', token);
         } catch (e) {
             console.error('[auth] Не удалось сохранить токен DonateX:', e);
             return {ok: false, error: 'Не удалось сохранить токен.'};
@@ -233,11 +234,11 @@ function createAuthManager(deps) {
         return {ok: true};
     }
 
-    function logout(service) {
+    async function logout(service) {
         if (!accounts[service]) return {ok: false, error: 'Неизвестный сервис.'};
-        if (!tokens.read()[service]) return {ok: false, error: 'Токен не сохранён.'};
+        if (!(await tokens.read())[service]) return {ok: false, error: 'Токен не сохранён.'};
         try {
-            tokens.remove(service);
+            await tokens.remove(service);
             const allMeta = meta.read();
             if (allMeta[service]) {
                 delete allMeta[service];

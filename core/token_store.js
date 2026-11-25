@@ -12,70 +12,87 @@ function pickKnownTokens(obj) {
 }
 
 function createTokenStore({tokensPath, metaPath, safeStorage, isReady}) {
-    function canEncrypt() {
+    let queue = Promise.resolve();
+
+    function serialized(fn) {
+        const run = queue.then(fn, fn);
+        queue = run.catch(() => {});
+        return run;
+    }
+
+    async function canEncrypt() {
         try {
-            return isReady() && safeStorage.isEncryptionAvailable();
+            return isReady() && await safeStorage.isAsyncEncryptionAvailable();
         } catch {
             return false;
         }
     }
 
-    function readFile() {
+    async function readFile() {
         const raw = readTextFile(tokensPath);
-        if (raw === null) return {tokens: {}, encrypted: false};
+        if (raw === null) return {tokens: {}, encrypted: false, shouldReEncrypt: false};
 
         const parsed = JSON.parse(raw);
         if (parsed && parsed.encrypted === true) {
-            if (!canEncrypt()) throw new Error('Шифрование недоступно, токены прочитать нельзя');
-            const json = safeStorage.decryptString(Buffer.from(parsed.data, 'base64'));
-            return {tokens: pickKnownTokens(JSON.parse(json)), encrypted: true};
+            if (!await canEncrypt()) throw new Error('Шифрование недоступно, токены прочитать нельзя');
+            const {result, shouldReEncrypt} = await safeStorage.decryptStringAsync(Buffer.from(parsed.data, 'base64'));
+            return {tokens: pickKnownTokens(JSON.parse(result)), encrypted: true, shouldReEncrypt: !!shouldReEncrypt};
         }
-        return {tokens: pickKnownTokens(parsed), encrypted: false};
+        return {tokens: pickKnownTokens(parsed), encrypted: false, shouldReEncrypt: false};
     }
 
-    function write(all) {
+    async function write(all) {
         const tokens = pickKnownTokens(all);
-        const payload = canEncrypt()
+        const payload = await canEncrypt()
             ? {
                 version: 1,
                 encrypted: true,
-                data: safeStorage.encryptString(JSON.stringify(tokens)).toString('base64')
+                data: (await safeStorage.encryptStringAsync(JSON.stringify(tokens))).toString('base64')
             }
             : tokens;
         writeFileAtomic(tokensPath, JSON.stringify(payload, null, 2));
     }
 
     function read() {
-        try {
-            return readFile().tokens;
-        } catch (e) {
-            console.error('[auth] Не удалось прочитать токены:', e);
-            return {};
-        }
+        return serialized(async () => {
+            try {
+                return (await readFile()).tokens;
+            } catch (e) {
+                console.error('[auth] Не удалось прочитать токены:', e);
+                return {};
+            }
+        });
     }
 
     function update(service, token) {
-        const {tokens} = readFile();
-        tokens[service] = token;
-        write(tokens);
+        return serialized(async () => {
+            const {tokens} = await readFile();
+            tokens[service] = token;
+            await write(tokens);
+        });
     }
 
     function remove(service) {
-        const {tokens} = readFile();
-        delete tokens[service];
-        write(tokens);
+        return serialized(async () => {
+            const {tokens} = await readFile();
+            delete tokens[service];
+            await write(tokens);
+        });
     }
 
     function upgradeEncryption() {
-        try {
-            const {tokens, encrypted} = readFile();
-            if (!encrypted && canEncrypt() && fs.existsSync(tokensPath)) {
-                write(tokens);
-                console.log('[auth] Токены зашифрованы');
+        return serialized(async () => {
+            try {
+                if (!fs.existsSync(tokensPath)) return;
+                const {tokens, encrypted, shouldReEncrypt} = await readFile();
+                if ((!encrypted || shouldReEncrypt) && await canEncrypt()) {
+                    await write(tokens);
+                    console.log(encrypted ? '[auth] Токены перешифрованы новым ключом' : '[auth] Токены зашифрованы');
+                }
+            } catch (e) {
+                console.error('[auth] Не удалось обновить хранилище токенов:', e);
             }
-        } catch (e) {
-            console.error('[auth] Не удалось обновить хранилище токенов:', e);
-        }
+        });
     }
 
     function readMeta() {

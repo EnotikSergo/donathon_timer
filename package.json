@@ -1,12 +1,13 @@
 {
   "name": "donathon-countdown",
-  "version": "1.0.0",
-  "description": "donathon-countdown",
+  "version": "2.0.0",
+  "description": "Таймер донатона для стрима с DonationAlerts и DonateX",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "start:forge": "electron-forge start",
     "test": "node --test \"test/*.test.js\"",
+    "lint": "eslint .",
     "package": "electron-forge package",
     "make": "electron-forge make"
   },
@@ -29,11 +30,25 @@
     "@electron-forge/maker-rpm": "8.0.1",
     "@electron-forge/maker-squirrel": "8.0.1",
     "@electron-forge/maker-zip": "8.0.1",
-    "electron": "45.3.0"
+    "@eslint/js": "9.39.5",
+    "electron": "45.3.0",
+    "eslint": "9.39.5",
+    "globals": "17.14.0"
   },
   "config": {
     "forge": {
-      "packagerConfig": {},
+      "packagerConfig": {
+        "ignore": [
+          "^/test($|/)",
+          "^/guide($|/)",
+          "^/saves($|/)",
+          "^/\\.github($|/)",
+          "^/\\.idea($|/)",
+          "^/README\\.md$",
+          "^/eslint\\.config\\.js$",
+          "^/\\.gitignore$"
+        ]
+      },
       "makers": [
         {
           "name": "@electron-forge/maker-squirrel",

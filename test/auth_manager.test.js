@@ -168,15 +168,15 @@ test('выход удаляет токен и данные аккаунта; п�
     await ctx.manager.saveDxToken('dx');
     const changed = ctx.tokensChanged;
 
-    assert.equal(ctx.manager.logout('donateX').ok, true);
+    assert.equal((await ctx.manager.logout('donateX')).ok, true);
     assert.equal(ctx.store.donateX, undefined);
     assert.equal(ctx.manager.getAccounts().donateX.status, 'none');
-    assert.equal(ctx.manager.logout('donateX').ok, false);
+    assert.equal((await ctx.manager.logout('donateX')).ok, false);
 
-    assert.equal(ctx.manager.logout('donationAlerts').ok, true);
+    assert.equal((await ctx.manager.logout('donationAlerts')).ok, true);
     assert.equal(ctx.store.donationAlerts, undefined);
     assert.equal(ctx.meta.donationAlerts, undefined);
 
-    assert.equal(ctx.manager.logout('trula').ok, false);
+    assert.equal((await ctx.manager.logout('trula')).ok, false);
     assert.equal(ctx.tokensChanged, changed + 2);
 });

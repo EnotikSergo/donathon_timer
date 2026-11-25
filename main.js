@@ -190,9 +190,9 @@ const donateX = createDonateX({
 
 const services = {donationAlerts, donateX};
 
-function refreshTokens() {
+async function refreshTokens() {
     const previous = tokens;
-    tokens = tokenStore.read();
+    tokens = await tokenStore.read();
     for (const service of AUTH_SERVICES) {
         if (servicesStarted && (previous[service] || '') !== (tokens[service] || '')) services[service].restart();
     }
@@ -426,11 +426,11 @@ app.on('second-instance', () => {
     }
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
     if (!isPrimary) return;
     registerIpcHandlers();
-    tokenStore.upgradeEncryption();
-    tokens = tokenStore.read();
+    await tokenStore.upgradeEncryption();
+    tokens = await tokenStore.read();
     timerCore.start();
     applyOverlayHost();
     createWindows();

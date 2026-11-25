@@ -25,7 +25,7 @@ function createApp({legacy = {}, saves = {}, encryption = false} = {}) {
         fs.mkdirSync(path.join(userData, 'saves'), {recursive: true});
         fs.writeFileSync(path.join(userData, 'saves', name), content);
     }
-    return {dir, appDir, userData, encryption, savesDir: path.join(userData, 'saves'), localStorage: null, lock: true};
+    return {dir, appDir, userData, encryption, keyVersion: 1, savesDir: path.join(userData, 'saves'), localStorage: null, lock: true};
 }
 
 const launched = [];
@@ -113,9 +113,12 @@ function launch(appCtx) {
         },
         shell: {openExternal: async () => {}},
         safeStorage: {
-            isEncryptionAvailable: () => appCtx.encryption,
-            encryptString: (s) => Buffer.from('ENC:' + Buffer.from(s).toString('hex')),
-            decryptString: (b) => Buffer.from(b.toString().slice(4), 'hex').toString()
+            isAsyncEncryptionAvailable: async () => appCtx.encryption,
+            encryptStringAsync: async (s) => Buffer.from(`ENC${appCtx.keyVersion}:` + Buffer.from(s).toString('hex')),
+            decryptStringAsync: async (b) => {
+                const [prefix, hex] = b.toString().split(':');
+                return {result: Buffer.from(hex, 'hex').toString(), shouldReEncrypt: prefix !== `ENC${appCtx.keyVersion}`};
+            }
         },
         net: {
             request: () => ({
@@ -388,6 +391,23 @@ test('токены: незашифрованный файл шифруется �
     assert.equal((await main.invoke('auth:logout', 'donateX')).ok, true);
     assert.deepEqual(await main.invoke('auth-tokens:get'), {donationAlerts: 'da'});
     assert.equal(JSON.parse(main.file('auth_tokens.json')).encrypted, true);
+    main.unload();
+}));
+
+test('токены: при смене ключа шифрования перешифровываются при запуске', () => withApp({encryption: true, saves: {
+    'migration.json': '{}',
+    'auth_tokens.json': '{"donationAlerts":"da"}'
+}}, async (appCtx) => {
+    const first = launch(appCtx);
+    await first.ready();
+    first.unload();
+    assert.match(Buffer.from(JSON.parse(first.file('auth_tokens.json')).data, 'base64').toString(), /^ENC1:/);
+
+    appCtx.keyVersion = 2;
+    const main = launch(appCtx);
+    await main.ready();
+    assert.match(Buffer.from(JSON.parse(main.file('auth_tokens.json')).data, 'base64').toString(), /^ENC2:/);
+    assert.deepEqual(await main.invoke('auth-tokens:get'), {donationAlerts: 'da'});
     main.unload();
 }));
 
