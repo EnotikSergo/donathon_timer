@@ -8,6 +8,7 @@ const INVOKE_CHANNELS = new Set([
     'auth:dx-save',
     'auth:boosty-save',
     'auth:boosty-login',
+    'boosty:inspect',
     'auth:logout',
     'donation:get-statuses'
 ]);

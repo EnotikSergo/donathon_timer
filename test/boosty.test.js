@@ -269,3 +269,91 @@ test('неожиданный формат ответа не роняет опр�
     assert.equal(b.statuses.at(-1), 'connected');
     assert.deepEqual(b.donations, []);
 });
+
+test('проверка: последний донат и последняя подписка по цене уровня, время не добавляется', async () => {
+    const b = createBoostyEnv({
+        since: START_TIME,
+        donations: [donation(1, 200, -500), donation(2, 350, -100), donation(3, 50, -900)],
+        events: [event('subscribe', 11, -800), event('recurrent', 12, -200, 2), event('unsubscribe', 11, -50)]
+    });
+    b.service.start();
+    await b.env.clock.flush();
+    assert.deepEqual(b.donations, []);
+
+    const r = await b.service.inspect();
+    assert.equal(r.ok, true);
+    assert.equal(r.blog, 'niki');
+    assert.deepEqual(r.levels, [{name: 'Базовый', price: 300}, {name: 'VIP', price: 1500}]);
+    assert.deepEqual(r.lastDonation, {amount: 350, name: 'u', createdAt: SEC - 100});
+    assert.deepEqual(r.lastSubscription, {kind: 'renewal', levelName: 'VIP', levelId: 12, amount: 1500, createdAt: SEC - 200});
+    assert.deepEqual(r.warnings, []);
+    assert.deepEqual(b.donations, []);
+    await b.env.clock.advance(20000);
+    assert.deepEqual(b.donations, []);
+});
+
+test('проверка: если за неделю подписок нет, период расширяется до 30 и 90 дней', async () => {
+    const b = createBoostyEnv();
+    const windows = [];
+    b.ctx.api.events = (url) => {
+        const q = new URL(url).searchParams;
+        windows.push(Math.round((Number(q.get('to')) - Number(q.get('from'))) / 86400));
+        return {status: 200, json: {data: windows.length === 2 ? [event('subscribe', 11, -20 * 86400)] : []}};
+    };
+    const r = await b.service.inspect();
+    assert.deepEqual(windows, [7, 30]);
+    assert.equal(r.lastSubscription.kind, 'subscription');
+    assert.equal(r.lastSubscription.amount, 300);
+});
+
+test('проверка: пусто — без донатов и подписок', async () => {
+    const b = createBoostyEnv();
+    const r = await b.service.inspect();
+    assert.equal(r.ok, true);
+    assert.equal(r.lastDonation, null);
+    assert.equal(r.lastSubscription, null);
+});
+
+test('проверка: неожиданный ответ Boosty попадает в предупреждения с началом ответа', async () => {
+    const b = createBoostyEnv({overrides: {donations: {status: 200, json: {strange: [1, 2]}}, events: {status: 200, json: {nope: true}}}});
+    const r = await b.service.inspect();
+    assert.equal(r.ok, true);
+    assert.equal(r.warnings.length, 2);
+    assert.match(r.warnings[0], /strange/);
+    assert.match(r.warnings[1], /nope/);
+});
+
+test('проверка: токен не принят, нет токена', async () => {
+    const b = createBoostyEnv({overrides: {levels: {status: 401}, refresh: {status: 400, json: {}}}});
+    assert.match((await b.service.inspect()).error, /не принял токен/);
+    const none = createBoostyEnv({creds: null});
+    assert.match((await none.service.inspect()).error, /подключите Boosty/);
+});
+
+test('одновременные опрос и проверка обновляют токен только один раз', async () => {
+    const b = createBoostyEnv({creds: {...AUTH_JSON, expiresAt: START_TIME + 10000, deviceId: 'dev-1', blog: 'niki'}});
+    let release;
+    const gate = new Promise((r) => {
+        release = r;
+    });
+    b.ctx.api.refresh = undefined;
+    b.env.onFetch(async (url) => {
+        if (url.endsWith('/oauth/token/')) {
+            b.ctx.refreshCalls++;
+            await gate;
+            return {status: 200, json: {access_token: 'acc2', refresh_token: 'ref2', expires_in: 3600}};
+        }
+        if (url.includes('/subscription_level/')) return b.ctx.api.levels;
+        if (url.includes('/sales/donation/')) return b.ctx.api.donations;
+        return b.ctx.api.events;
+    });
+    b.service.start();
+    const inspection = b.service.inspect();
+    await b.env.clock.flush();
+    release();
+    const r = await inspection;
+    await b.env.clock.flush();
+    assert.equal(r.ok, true);
+    assert.equal(b.ctx.refreshCalls, 1);
+    assert.equal(b.statuses.at(-1), 'connected');
+});

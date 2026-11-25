@@ -218,6 +218,19 @@ const boostyLogin = createBoostyLogin({
     userAgent: app.userAgentFallback
 });
 
+async function inspectBoosty() {
+    const result = await boosty.inspect();
+    if (!result.ok) return result;
+    const rublesPerHour = timerCore.getRublesPerHour();
+    const toSeconds = (amount) => Math.round((Number(amount) || 0) * 3600 / rublesPerHour);
+    return {
+        ...result,
+        rublesPerHour,
+        lastDonation: result.lastDonation && {...result.lastDonation, seconds: toSeconds(result.lastDonation.amount)},
+        lastSubscription: result.lastSubscription && {...result.lastSubscription, seconds: toSeconds(result.lastSubscription.amount)}
+    };
+}
+
 async function loginToBoosty(blogRaw) {
     const blog = normalizeBlog(blogRaw);
     if (!blog) return {ok: false, error: 'Сначала укажите блог: адрес вида boosty.to/имя или просто имя.'};
@@ -434,6 +447,7 @@ function registerIpcHandlers() {
     handle('auth:dx-save', (token) => authManager.saveDxToken(token));
     handle('auth:boosty-save', (data) => authManager.saveBoostyToken(data && data.token, data && data.blog));
     handle('auth:boosty-login', (blog) => loginToBoosty(blog));
+    handle('boosty:inspect', () => inspectBoosty());
     handle('auth:logout', (service) => authManager.logout(service));
     on('auth:dx-open-settings', () => authManager.openDxSettings());
 }

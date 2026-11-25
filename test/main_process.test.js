@@ -467,6 +467,7 @@ test('Boosty: модуль запускается, отказ токена ви�
     assert.ok(main.fetchCalls.some((u) => u.startsWith('https://api.boosty.to/v1/blog/niki/subscription_level/')));
     assert.equal((await main.invoke('donation:get-statuses')).BY, 'error');
     assert.equal((await main.invoke('accounts:get')).boosty.status, 'invalid');
+    assert.match((await main.invoke('boosty:inspect')).error, /не принял токен/);
     main.unload();
 }));
 

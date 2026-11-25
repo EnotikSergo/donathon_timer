@@ -6,6 +6,7 @@ const LEVELS_TTL = 10 * 60 * 1000;
 const EVENTS_OVERLAP_SECONDS = 300;
 const MAX_PROCESSED_IDS = 2000;
 const SUBSCRIPTION_EVENTS = ['subscribe', 'recurrent'];
+const INSPECT_WINDOWS_DAYS = [7, 30, 90];
 
 function authError(message, status) {
     const err = new Error(message);
@@ -44,6 +45,7 @@ function createBoosty(deps) {
     let generation = 0;
     let authFailed = false;
     let stopped = true;
+    let refreshing = null;
     const warned = new Set();
 
     function warnOnce(key, ...args) {
@@ -79,20 +81,26 @@ function createBoosty(deps) {
         }
     }
 
-    async function refresh() {
-        let next;
-        try {
-            next = await refreshBoostyTokens(fetchImpl, creds, now());
-        } catch (e) {
-            if (e.status === 401 || e.status === 403) throw authError(e.message, e.status);
-            throw e;
-        }
-        creds = next;
-        try {
-            await saveCredentials(serializeCredentials(creds));
-        } catch (e) {
-            log.error('[BY] Не удалось сохранить обновлённый токен:', e);
-        }
+    function refresh() {
+        if (refreshing) return refreshing;
+        refreshing = (async () => {
+            let next;
+            try {
+                next = await refreshBoostyTokens(fetchImpl, creds, now());
+            } catch (e) {
+                if (e.status === 401 || e.status === 403) throw authError(e.message, e.status);
+                throw e;
+            }
+            creds = next;
+            try {
+                await saveCredentials(serializeCredentials(creds));
+            } catch (e) {
+                log.error('[BY] Не удалось сохранить обновлённый токен:', e);
+            }
+        })().finally(() => {
+            refreshing = null;
+        });
+        return refreshing;
     }
 
     async function apiGet(path, params) {
@@ -139,10 +147,24 @@ function createBoosty(deps) {
         onDonation(amount, {service: 'boosty', ...meta});
     }
 
+    function extractDonations(json) {
+        const data = json && json.data;
+        if (Array.isArray(data && data.donationsSales)) return data.donationsSales;
+        return Array.isArray(data) ? data : null;
+    }
+
+    function subscriptionAmount(e) {
+        const level = levels.get(Number(e.levelId));
+        const eventAmount = Number(e.amount);
+        return {
+            level,
+            amount: level && level.price > 0 ? level.price : (Number.isFinite(eventAmount) ? eventAmount : 0)
+        };
+    }
+
     async function pollDonations() {
         const json = await apiGet(blogPath('/sales/donation/'), {limit: '50', sort_by: 'time', order: 'gt'});
-        const data = json && json.data;
-        const list = Array.isArray(data && data.donationsSales) ? data.donationsSales : (Array.isArray(data) ? data : null);
+        const list = extractDonations(json);
         if (!list) {
             warnOnce('donations-shape', '[BY] Неожиданный ответ списка донатов:', JSON.stringify(json).slice(0, 300));
             return;
@@ -191,9 +213,7 @@ function createBoosty(deps) {
             processed.add(key);
             if (createdSec * 1000 < since) continue;
 
-            const level = levels.get(Number(e.levelId));
-            const eventAmount = Number(e.amount);
-            const amount = level && level.price > 0 ? level.price : (Number.isFinite(eventAmount) ? eventAmount : 0);
+            const {level, amount} = subscriptionAmount(e);
             const kind = e.eventType === 'recurrent' ? 'renewal' : 'subscription';
             log.log(`[BY] ${kind === 'renewal' ? 'Продление' : 'Подписка'} «${(level && level.name) || e.levelId || '?'}» — ${amount} RUB`);
             credit(amount, {kind, levelId: e.levelId, levelName: level ? level.name : ''});
@@ -280,7 +300,88 @@ function createBoosty(deps) {
         }
     }
 
-    return {start, restart, stop, getStatus: () => status.current};
+    const snippet = (json) => {
+        try {
+            return JSON.stringify(json).slice(0, 300);
+        } catch {
+            return String(json).slice(0, 300);
+        }
+    };
+
+    async function inspect() {
+        if (!creds) creds = deserializeCredentials(getCredentials());
+        if (!creds) return {ok: false, error: 'Сначала подключите Boosty.'};
+
+        const warnings = [];
+        try {
+            await loadLevels(true);
+
+            const donationsJson = await apiGet(blogPath('/sales/donation/'), {limit: '20', sort_by: 'time', order: 'gt'});
+            const donations = extractDonations(donationsJson);
+            if (!donations) warnings.push(`Список донатов: неожиданный ответ ${snippet(donationsJson)}`);
+            const lastDonation = (donations || [])
+                .filter((d) => d && d.id !== undefined)
+                .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))[0] || null;
+
+            let lastEvent = null;
+            const nowSec = Math.floor(now() / 1000);
+            for (const days of INSPECT_WINDOWS_DAYS) {
+                const eventsJson = await apiGet(`/v1/blog/stat/${encodeURIComponent(creds.blog)}/events`, {
+                    from: String(nowSec - days * 86400),
+                    to: String(nowSec),
+                    event_types: SUBSCRIPTION_EVENTS.join(','),
+                    limit: '100'
+                });
+                if (!Array.isArray(eventsJson && eventsJson.data)) {
+                    warnings.push(`Список событий: неожиданный ответ ${snippet(eventsJson)}`);
+                    break;
+                }
+                const events = eventsJson.data
+                    .filter((e) => e && SUBSCRIPTION_EVENTS.includes(e.eventType))
+                    .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+                if (events.length) {
+                    lastEvent = events[0];
+                    break;
+                }
+            }
+
+            if (lastEvent && lastEvent.levelId !== undefined && !levels.has(Number(lastEvent.levelId))) await loadLevels(true);
+
+            let lastSubscription = null;
+            if (lastEvent) {
+                const {level, amount} = subscriptionAmount(lastEvent);
+                lastSubscription = {
+                    kind: lastEvent.eventType === 'recurrent' ? 'renewal' : 'subscription',
+                    levelName: level ? level.name : '',
+                    levelId: lastEvent.levelId,
+                    amount,
+                    createdAt: Number(lastEvent.createdAt) || 0
+                };
+            }
+
+            return {
+                ok: true,
+                blog: creds.blog,
+                levels: Array.from(levels.values()).map((l) => ({name: l.name, price: l.price})),
+                lastDonation: lastDonation ? {
+                    amount: Number(lastDonation.amount) || 0,
+                    name: (lastDonation.user && lastDonation.user.name) || '',
+                    createdAt: Number(lastDonation.createdAt) || 0
+                } : null,
+                lastSubscription,
+                warnings
+            };
+        } catch (e) {
+            return {
+                ok: false,
+                error: e.auth
+                    ? 'Boosty не принял токен. Нажмите «Запросить токен» и войдите заново.'
+                    : `Не удалось получить данные Boosty: ${e.message}`
+            };
+        }
+    }
+
+    return {start, restart, stop, inspect, getStatus: () => status.current};
 }
 
 module.exports = {createBoosty};

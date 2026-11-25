@@ -136,6 +136,11 @@ input::-webkit-inner-spin-button {
 
 .main-container {
     display: flex;
+    height: 100vh;
+}
+
+.token-auth-panel {
+    overflow-y: auto;
 }
 
 .token-auth-panel {
@@ -222,6 +227,7 @@ input::-webkit-inner-spin-button {
     font-size: 12px;
     text-align: center;
     min-height: 16px;
+    white-space: pre-line;
 }
 .token-status.success {
     color: #2ecc71;
@@ -231,5 +237,9 @@ input::-webkit-inner-spin-button {
 }
 
 .cp-row[hidden] {
+    display: none;
+}
+
+.token-buttons button[hidden] {
     display: none;
 }

@@ -16,6 +16,7 @@ const boostyBlogInput = document.getElementById('boostyBlogInput');
 const requestTokenBtn = document.getElementById('requestTokenBtn');
 const applyTokenBtn = document.getElementById('applyTokenBtn');
 const logoutBtn = document.getElementById('logoutBtn');
+const boostyCheckBtn = document.getElementById('boostyCheckBtn');
 const tokenStatus = document.getElementById('tokenStatus');
 
 let authTokens = {};
@@ -204,6 +205,48 @@ function updateLogoutButton() {
     const service = serviceSelect.value;
     logoutBtn.textContent = `Выйти из ${SERVICE_NAMES[service] || 'сервиса'}`;
     logoutBtn.disabled = !authTokens[service];
+    boostyCheckBtn.hidden = service !== 'boosty';
+    boostyCheckBtn.disabled = !authTokens.boosty;
+}
+
+function formatDuration(seconds) {
+    const total = Math.max(0, Math.round(seconds));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    if (h) return m ? `${h} ч ${m} мин` : `${h} ч`;
+    if (m) return s ? `${m} мин ${s} с` : `${m} мин`;
+    return `${s} с`;
+}
+
+function formatDate(unixSeconds) {
+    if (!unixSeconds) return '';
+    const d = new Date(unixSeconds * 1000);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function formatBoostyInspection(r) {
+    const lines = [`Блог ${r.blog}: уровней подписки — ${r.levels.length}, цена часа ${r.rublesPerHour} ₽`];
+    if (r.lastDonation) {
+        const from = r.lastDonation.name ? ` от ${r.lastDonation.name}` : '';
+        lines.push(`Последний донат: ${r.lastDonation.amount} ₽${from} (${formatDate(r.lastDonation.createdAt)}) → добавил бы ${formatDuration(r.lastDonation.seconds)}`);
+    } else {
+        lines.push('Донатов пока нет');
+    }
+    if (r.lastSubscription) {
+        const sub = r.lastSubscription;
+        const renewal = sub.kind === 'renewal';
+        const level = sub.levelName ? ` «${sub.levelName}»` : '';
+        const title = renewal ? 'Последнее продление' : 'Последняя подписка';
+        const verb = renewal ? 'добавило бы' : 'добавила бы';
+        lines.push(`${title}${level}: ${sub.amount} ₽ (${formatDate(sub.createdAt)}) → ${verb} ${formatDuration(sub.seconds)}`);
+    } else {
+        lines.push('Подписок и продлений за 90 дней нет');
+    }
+    lines.push('Время не добавлено — это только проверка');
+    for (const w of r.warnings || []) lines.push(`⚠ ${w}`);
+    return lines.join('\n');
 }
 
 function fillTokenField() {
@@ -293,6 +336,25 @@ applyTokenBtn.addEventListener('click', async () => {
         setLocalStatus('Ошибка сохранения', 'error');
     } finally {
         applyTokenBtn.disabled = false;
+    }
+});
+
+boostyCheckBtn.addEventListener('click', async () => {
+    boostyCheckBtn.disabled = true;
+    setLocalStatus('Запрашиваю данные Boosty…', 'info');
+    try {
+        const result = await ipcRenderer.invoke('boosty:inspect');
+        if (result && result.ok) {
+            setLocalStatus(formatBoostyInspection(result), result.warnings && result.warnings.length ? 'warning' : 'ok');
+            tokenStatus.scrollIntoView({block: 'nearest'});
+        } else {
+            setLocalStatus((result && result.error) || 'Не удалось проверить Boosty', 'error');
+        }
+    } catch (e) {
+        console.error('[auth] Ошибка проверки Boosty:', e);
+        setLocalStatus('Не удалось проверить Boosty', 'error');
+    } finally {
+        boostyCheckBtn.disabled = !authTokens.boosty;
     }
 });
 
